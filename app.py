@@ -555,49 +555,88 @@ with tab1:
 
     if st.session_state.current_tickets:
         st.divider()
-        st.markdown("### 💰 Bu Kupon Tutarsa Ne Kazanırsın?")
+        st.markdown(f"### 💰 Bu Kupon Tutarsa Ne Kazanırsın? ({GAME['name']})")
         st.caption(
-            "Sayısal Loto resmi ikramiye yapısına göre, bir kuponun tutturduğu sayıya göre "
-            "alabileceği ödüller. Jackpot çekilişten çekilişe değişir; aşağıdaki değerleri "
-            "güncelleyebilirsin."
+            f"{GAME['name']} ödül yapısına göre tahmini değerler. Çekilişe göre değişir; "
+            "düzenleyebilirsin."
         )
 
-        with st.expander("⚙️ İkramiye Değerlerini Düzenle", expanded=False):
-            pc1, pc2, pc3, pc4 = st.columns(4)
-            prize6 = pc1.number_input("6 bilen (Jackpot)", min_value=1_000_000,
-                                      max_value=10_000_000_000,
-                                      value=DEFAULT_PRIZES_TL[6], step=10_000_000,
-                                      key="p6")
-            prize5 = pc2.number_input("5 bilen", min_value=1_000,
-                                      max_value=5_000_000,
-                                      value=DEFAULT_PRIZES_TL[5], step=10_000,
-                                      key="p5")
-            prize4 = pc3.number_input("4 bilen", min_value=10,
-                                      max_value=100_000,
-                                      value=DEFAULT_PRIZES_TL[4], step=50,
-                                      key="p4")
-            prize3 = pc4.number_input("3 bilen", min_value=1,
-                                      max_value=1_000,
-                                      value=DEFAULT_PRIZES_TL[3], step=5,
-                                      key="p3")
-
-        n_tickets = len(st.session_state.current_tickets)
-        total_cost = n_tickets * DEFAULT_COST_PER_TICKET_TL
-
-        def fmt_tl(v: int) -> str:
+        def fmt_tl_local(v: int) -> str:
             return f"{v:,.0f} TL".replace(",", ".")
 
-        pc1, pc2, pc3, pc4 = st.columns(4)
-        pc1.metric("3 Bilirsen", fmt_tl(prize3),
-                   help="Bir kupondan 3 sayı tutarsa kazanılan tahmini ödül")
-        pc2.metric("4 Bilirsen", fmt_tl(prize4))
-        pc3.metric("5 Bilirsen", fmt_tl(prize5))
-        pc4.metric("6 Bilirsen 🎰", fmt_tl(prize6))
+        n_tickets = len(st.session_state.current_tickets)
+        cost_per = GAME["ticket_cost_tl"]
+        total_cost = n_tickets * cost_per
+
+        if game_key == "sayisal_loto":
+            with st.expander("⚙️ İkramiye Değerlerini Düzenle", expanded=False):
+                pc1, pc2, pc3, pc4 = st.columns(4)
+                prize6 = pc1.number_input("6 bilen (Jackpot)", min_value=1_000_000,
+                                          max_value=10_000_000_000,
+                                          value=GAME["prizes_tl"][6], step=10_000_000, key="p6")
+                prize5 = pc2.number_input("5 bilen", min_value=1_000,
+                                          max_value=5_000_000,
+                                          value=GAME["prizes_tl"][5], step=10_000, key="p5")
+                prize4 = pc3.number_input("4 bilen", min_value=10,
+                                          max_value=100_000,
+                                          value=GAME["prizes_tl"][4], step=50, key="p4")
+                prize3 = pc4.number_input("3 bilen", min_value=1,
+                                          max_value=1_000,
+                                          value=GAME["prizes_tl"][3], step=5, key="p3")
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            pc1.metric("3 Bilirsen", fmt_tl_local(prize3))
+            pc2.metric("4 Bilirsen", fmt_tl_local(prize4))
+            pc3.metric("5 Bilirsen", fmt_tl_local(prize5))
+            pc4.metric("6 Bilirsen 🎰", fmt_tl_local(prize6))
+
+        elif game_key == "sans_topu":
+            prizes = GAME["prizes_tl"]
+            with st.expander("⚙️ İkramiye Değerlerini Düzenle", expanded=False):
+                st.caption("Anahtar: (ana, şans topu) — örn. (5,1) = 5 ana + Şans Topu")
+                cols = st.columns(4)
+                custom = {}
+                for i, (k, v) in enumerate(sorted(prizes.items(), reverse=True)):
+                    main_h, st_h = k
+                    label = f"{main_h}+1" if st_h else f"{main_h}"
+                    with cols[i % 4]:
+                        custom[k] = st.number_input(
+                            f"{label} bilen",
+                            min_value=0, max_value=100_000_000,
+                            value=int(v),
+                            step=max(1, int(v // 50)),
+                            key=f"st_p_{main_h}_{st_h}",
+                        )
+            cols = st.columns(4)
+            top_keys = [(5, 1), (5, 0), (4, 1), (3, 1)]
+            labels = ["5+1 🎰", "5 ana", "4+1 ⭐", "3+1"]
+            for i, (key, lab) in enumerate(zip(top_keys, labels)):
+                cols[i].metric(lab, fmt_tl_local(custom.get(key, prizes.get(key, 0))))
+
+        elif game_key == "on_numara":
+            prizes = GAME["prizes_tl"]
+            with st.expander("⚙️ İkramiye Değerlerini Düzenle", expanded=False):
+                st.caption("On Numara: 1-5 doğru ödüllü değildir.")
+                cols = st.columns(3)
+                custom = {}
+                for i, (k, v) in enumerate(sorted(prizes.items(), reverse=True)):
+                    label = f"{k} doğru" if k > 0 else "0 doğru"
+                    with cols[i % 3]:
+                        custom[k] = st.number_input(
+                            f"{label}",
+                            min_value=0, max_value=100_000_000,
+                            value=int(v),
+                            step=max(1, int(v // 50)),
+                            key=f"on_p_{k}",
+                        )
+            cols = st.columns(5)
+            top_keys = [10, 9, 8, 7, 0]
+            labels = ["10 🎰", "9 doğru", "8 doğru", "7 doğru", "0 doğru ⭐"]
+            for i, (key, lab) in enumerate(zip(top_keys, labels)):
+                cols[i].metric(lab, fmt_tl_local(custom.get(key, prizes.get(key, 0))))
 
         st.info(
-            f"💸 Toplam Maliyet: **{n_tickets} kolon × {DEFAULT_COST_PER_TICKET_TL} TL "
-            f"= {fmt_tl(n_tickets * DEFAULT_COST_PER_TICKET_TL)}** "
-            f"(Joker / Süper Star eklersen ekstra ücret yansır)"
+            f"💸 Toplam Maliyet: **{n_tickets} kolon × {cost_per} TL = "
+            f"{fmt_tl_local(total_cost)}**"
         )
 
 # TAB 2: TICKET CHECKER
