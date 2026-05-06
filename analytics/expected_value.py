@@ -21,7 +21,7 @@ DEFAULT_PRIZES_TL = {
     3: 30,             # 3 bilen
 }
 
-DEFAULT_COST_PER_TICKET_TL = 20  # 1 kolon ücreti (2026 itibarıyla)
+DEFAULT_COST_PER_TICKET_TL = 25  # 1 kolon ücreti (2026 itibarıyla)
 
 
 def hypergeometric_prob(k: int, total: int = 90, drawn: int = 6, picked: int = 6) -> float:

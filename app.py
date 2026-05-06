@@ -8,9 +8,9 @@ from scraper import ScrapeFailedError, fetch_latest_draw
 from math_engine import MathEngine
 from predictor import Predictor
 from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
-from analytics.expected_value import budget_summary, DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
+from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 
-APP_VERSION = "v2.2.1"
+APP_VERSION = "v2.3.0"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -265,72 +265,51 @@ with tab1:
             st.session_state.current_tickets = []
             st.rerun()
 
-    st.divider()
-    st.markdown("### 💰 Gerçekçi Kazanç Hesabı")
-    st.caption(
-        "Hipergeometrik 6/90 olasılığı + Türkiye Sayısal Loto güncel ortalama "
-        "ikramiye değerleriyle hesaplanır. Jackpot tutarları çekilişe göre değişir; "
-        "aşağıdaki değerleri kendi tahminlerinle güncelleyebilirsin."
-    )
+    if st.session_state.current_tickets:
+        st.divider()
+        st.markdown("### 💰 Bu Kupon Tutarsa Ne Kazanırsın?")
+        st.caption(
+            "Sayısal Loto resmi ikramiye yapısına göre, bir kuponun tutturduğu sayıya göre "
+            "alabileceği ödüller. Jackpot çekilişten çekilişe değişir; aşağıdaki değerleri "
+            "güncelleyebilirsin."
+        )
 
-    bc1, bc2 = st.columns(2)
-    budget = bc1.number_input("Bütçe (TL)", min_value=20, max_value=100000,
-                              value=100, step=20)
-    cost = bc2.number_input("1 Kolon Ücreti (TL)", min_value=1, max_value=200,
-                            value=DEFAULT_COST_PER_TICKET_TL, step=1)
+        with st.expander("⚙️ İkramiye Değerlerini Düzenle", expanded=False):
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            prize6 = pc1.number_input("6 bilen (Jackpot)", min_value=1_000_000,
+                                      max_value=10_000_000_000,
+                                      value=DEFAULT_PRIZES_TL[6], step=10_000_000,
+                                      key="p6")
+            prize5 = pc2.number_input("5 bilen", min_value=1_000,
+                                      max_value=5_000_000,
+                                      value=DEFAULT_PRIZES_TL[5], step=10_000,
+                                      key="p5")
+            prize4 = pc3.number_input("4 bilen", min_value=10,
+                                      max_value=100_000,
+                                      value=DEFAULT_PRIZES_TL[4], step=50,
+                                      key="p4")
+            prize3 = pc4.number_input("3 bilen", min_value=1,
+                                      max_value=1_000,
+                                      value=DEFAULT_PRIZES_TL[3], step=5,
+                                      key="p3")
 
-    with st.expander("⚙️ İkramiye Tablosu (özelleştirilebilir)", expanded=False):
+        n_tickets = len(st.session_state.current_tickets)
+        total_cost = n_tickets * DEFAULT_COST_PER_TICKET_TL
+
+        def fmt_tl(v: int) -> str:
+            return f"{v:,.0f} TL".replace(",", ".")
+
         pc1, pc2, pc3, pc4 = st.columns(4)
-        prize6 = pc1.number_input("6 bilen (TL)", min_value=1_000_000,
-                                  max_value=10_000_000_000,
-                                  value=DEFAULT_PRIZES_TL[6], step=10_000_000)
-        prize5 = pc2.number_input("5 bilen (TL)", min_value=1_000,
-                                  max_value=5_000_000,
-                                  value=DEFAULT_PRIZES_TL[5], step=10_000)
-        prize4 = pc3.number_input("4 bilen (TL)", min_value=10,
-                                  max_value=100_000,
-                                  value=DEFAULT_PRIZES_TL[4], step=50)
-        prize3 = pc4.number_input("3 bilen (TL)", min_value=1,
-                                  max_value=1_000,
-                                  value=DEFAULT_PRIZES_TL[3], step=5)
+        pc1.metric("3 Bilirsen", fmt_tl(prize3),
+                   help="Bir kupondan 3 sayı tutarsa kazanılan tahmini ödül")
+        pc2.metric("4 Bilirsen", fmt_tl(prize4))
+        pc3.metric("5 Bilirsen", fmt_tl(prize5))
+        pc4.metric("6 Bilirsen 🎰", fmt_tl(prize6))
 
-    custom_prizes = {6: prize6, 5: prize5, 4: prize4, 3: prize3}
-    summary = budget_summary(budget_tl=budget, cost_per_ticket=cost,
-                             prizes=custom_prizes)
-
-    sc1, sc2, sc3, sc4 = st.columns(4)
-    sc1.metric("Oynanacak Kolon", summary["num_tickets"],
-               help=f"{budget} TL ÷ {cost} TL = {summary['num_tickets']} kolon")
-    sc2.metric("Beklenen Dönüş",
-               f"{summary['expected_return_tl']:.2f} TL",
-               help="Tüm tutturma seviyelerinin olasılık-ağırlıklı ortalaması")
-    sc3.metric("Beklenen Net Zarar",
-               f"-{summary['expected_loss_tl']:.2f} TL",
-               help="Maliyet − beklenen dönüş. Uzun vade ortalaması.")
-    sc4.metric("RTP (Geri Dönüş %)",
-               f"%{summary['rtp_pct']:.2f}",
-               help="100 TL'nin uzun vadede ortalama ne kadarı geri döner")
-
-    st.markdown("#### 🎯 Tutturma Olasılıkları (bu bütçe için)")
-    pc1, pc2, pc3, pc4 = st.columns(4)
-    pc1.metric("3+ Tutturma",
-               f"%{summary['p_3_plus_pct']:.2f}",
-               help=f"Yaklaşık 1/{summary['p_3_plus_one_in']} bütçeyle bir kez")
-    pc2.metric("4+ Tutturma",
-               f"%{summary['p_4_plus_pct']:.4f}")
-    pc3.metric("5+ Tutturma",
-               f"%{summary['p_5_plus_pct']:.5f}")
-    pc4.metric("Jackpot (6)",
-               f"1 / {summary['p_jackpot_one_in']:,}".replace(",", "."))
-
-    if summary["expected_loss_tl"] > 0:
-        st.warning(
-            f"⚠️ Bu bütçe için **uzun vade ortalama beklenen zarar "
-            f"{summary['expected_loss_tl']:.0f} TL**. Sayısal Loto matematiksel olarak "
-            f"negatif beklenen değerli bir oyundur — sadece eğlence amaçlı oynayın. "
-            f"Tek seferde dalgalanma çok büyüktür: %{summary['p_3_plus_pct']:.1f} "
-            f"olasılıkla kâra geçebilir, ama %{100 - summary['p_3_plus_pct']:.1f} "
-            f"olasılıkla bütçeyi kaybedersiniz."
+        st.info(
+            f"💸 Toplam Maliyet: **{n_tickets} kolon × {DEFAULT_COST_PER_TICKET_TL} TL "
+            f"= {fmt_tl(n_tickets * DEFAULT_COST_PER_TICKET_TL)}** "
+            f"(Joker / Süper Star eklersen ekstra ücret yansır)"
         )
 
 # TAB 2: TICKET CHECKER
