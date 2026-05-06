@@ -125,8 +125,8 @@ with st.sidebar:
     st.divider()
     st.header("⚙️ Motor Ayarları")
     strategy = st.radio("Yapay Zeka Stratejisi", 
-                       ["Dengeli", "Sıcak Sayılar", "Soğuk Sayılar"],
-                       help="Kuponların hangi matematiksel ağırlıkla üretileceğini seçin.")
+                       ["Süper Hibrit", "Sıcak Sayılar", "Soğuk Sayılar"],
+                       help="Süper Hibrit: Asal sayı dengesi, pozisyon sınırları, ondalık dilim filtresi ve mecburi 'patlayacak soğuk sayı' enjeksiyonu içerir.")
     num_tickets = st.slider("Üretilecek Kolon Sayısı", 1, 10, 5)
     
     st.divider()
