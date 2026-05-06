@@ -11,7 +11,7 @@ from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 import auto_tracker
 
-APP_VERSION = "v2.5.0"
+APP_VERSION = "v2.5.1"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -112,20 +112,21 @@ if not st.session_state.logged_in:
     st.stop()
 
 # --- DATA ---
-# Cache anahtarlarına APP_VERSION ekleyerek her deploy'da otomatik invalidation.
+# NOT: Streamlit'te '_' önekli parametreler cache key'e DAHİL EDİLMEZ.
+# Bu yüzden cache busting için underscore-suz isim kullanmak ZORUNLU.
 @st.cache_data(show_spinner=False)
-def get_data(_version: str = APP_VERSION):
+def get_data():
     return load_data()
 
 @st.cache_resource(show_spinner=False)
-def get_engine_and_predictor(_df_hash: int, _version: str = APP_VERSION):
-    df = get_data(_version)
+def get_engine_and_predictor(version: str):
+    df = get_data()
     return MathEngine(df), Predictor(df)
 
 
 try:
     with st.spinner("Gerçek çekiliş veritabanı yükleniyor / güncelleniyor..."):
-        df = get_data(APP_VERSION)
+        df = get_data()
 except ScrapeFailedError as e:
     st.error(
         "❌ Sayısal Loto verisi çekilemedi. İnternet bağlantınızı veya kaynak siteyi kontrol edin.\n\n"
@@ -136,7 +137,7 @@ except Exception as e:
     st.error(f"❌ Veri yükleme hatası: {e}")
     st.stop()
 
-engine, predictor = get_engine_and_predictor(len(df), APP_VERSION)
+engine, predictor = get_engine_and_predictor(APP_VERSION)
 
 
 # --- AUTO TRACKER: Her oturumda 1 kez sessizce kontrol et ---
