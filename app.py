@@ -10,7 +10,7 @@ from predictor import Predictor
 from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 
-APP_VERSION = "v2.3.0"
+APP_VERSION = "v2.3.1"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")

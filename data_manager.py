@@ -53,12 +53,21 @@ def load_data(progress_callback=None) -> pd.DataFrame:
             df.to_csv(DATA_FILE, index=False)
             return df
 
-        latest_remote = fetch_latest_draw_number()
+        # Incremental update — kaynak siteye ulaşılamasa veya henüz yayında olmayan
+        # çekilişler 500 dönse de mevcut CSV ile çalışmaya devam et.
+        try:
+            latest_remote = fetch_latest_draw_number()
+        except ScrapeFailedError:
+            return df
         latest_local = int(df["cekilis_no"].max())
         if latest_remote > latest_local:
             new_rows = []
             for n in range(latest_local + 1, latest_remote + 1):
-                d = fetch_draw(n)
+                try:
+                    d = fetch_draw(n)
+                except ScrapeFailedError:
+                    # Çekiliş henüz publish edilmemiş olabilir; sessizce atla.
+                    continue
                 new_rows.append({
                     "cekilis_no": d["cekilis_no"],
                     "tarih": d["tarih"],
