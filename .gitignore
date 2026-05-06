@@ -4,3 +4,5 @@ __pycache__/
 .DS_Store
 daemon_state.json
 settings.json
+*.pkl
+.tahminci_cache/
