@@ -131,6 +131,81 @@ class Predictor:
         delta = log_p - baseline
         return float(1.0 / (1.0 + math.exp(-delta)))
 
+    def _build_smart_pool(
+        self, probs: np.ndarray, pool_size: int, randomize: bool
+    ) -> list[int]:
+        """
+        Akıllı havuz: yüksek olasılıklı sayılardan, gerçek çekiliş dağılımına
+        benzer şekilde seçer (dekat dağılımı + tek/çift dengesi).
+
+        Greedy seçim: her adımda kalan adaylardan, dağılım kısıtlarını ihlal
+        etmeyen en yüksek olasılıklı sayıyı seçer. Randomize modda olasılık
+        ağırlıklı sampling, deterministik modda argmax.
+        """
+        n_total = self.total_numbers
+        candidate_k = min(n_total, max(pool_size * 3, pool_size + 15))
+        candidates = list(np.argsort(probs)[-candidate_k:][::-1])  # high → low
+
+        rng = np.random.default_rng() if randomize else None
+
+        # Hedef dağılımlar (6 sayılık çekiliş için tipik):
+        #   - dekat başına max ceil(pool_size/3)
+        #   - tek/çift en az pool_size//3 her birinden
+        max_per_decade = max(2, (pool_size + 2) // 3)
+        min_odd = max(1, pool_size // 3)
+        min_even = max(1, pool_size // 3)
+
+        pool: list[int] = []
+        decade_counts: dict[int, int] = {}
+        odd_count = 0
+        even_count = 0
+
+        def violates(num: int) -> bool:
+            d = num // 10
+            if decade_counts.get(d, 0) >= max_per_decade:
+                return True
+            return False
+
+        remaining = pool_size
+        while remaining > 0 and candidates:
+            slots_left = remaining
+            need_odd = max(0, min_odd - odd_count) >= slots_left
+            need_even = max(0, min_even - even_count) >= slots_left
+
+            valid = []
+            for idx in candidates:
+                num = int(idx) + 1
+                if violates(num):
+                    continue
+                if need_odd and num % 2 == 0:
+                    continue
+                if need_even and num % 2 != 0:
+                    continue
+                valid.append(idx)
+
+            if not valid:
+                # Kısıt çok sıkıysa gevşet
+                valid = [idx for idx in candidates if not violates(int(idx) + 1)] or list(candidates)
+
+            if randomize and len(valid) > 1:
+                w = probs[valid].copy()
+                w = w / w.sum()
+                pick = int(rng.choice(valid, p=w))
+            else:
+                pick = int(valid[0])
+
+            num = pick + 1
+            pool.append(num)
+            decade_counts[num // 10] = decade_counts.get(num // 10, 0) + 1
+            if num % 2 == 0:
+                even_count += 1
+            else:
+                odd_count += 1
+            candidates.remove(pick)
+            remaining -= 1
+
+        return sorted(pool)
+
     def generate_system_tickets(
         self, pool_size: int = 7, randomize_pool: bool = False
     ) -> tuple[list[dict], list[int]]:
@@ -155,17 +230,7 @@ class Predictor:
             raise ValueError("pool_size 6-20 arasında olmalı")
 
         out = self.get_probabilities()
-
-        if randomize_pool:
-            top_k = min(self.total_numbers, pool_size + 8)
-            top_idx = np.argsort(out.final)[-top_k:]
-            sub_weights = out.final[top_idx].copy()
-            sub_weights = sub_weights / sub_weights.sum()
-            rng = np.random.default_rng()
-            chosen = rng.choice(top_idx, size=pool_size, replace=False, p=sub_weights)
-            pool = sorted(int(i + 1) for i in chosen)
-        else:
-            pool = sorted(int(i + 1) for i in np.argsort(out.final)[-pool_size:])
+        pool = self._build_smart_pool(out.final, pool_size, randomize_pool)
 
         # Joker ve Süper Star: pool dışı en yüksek 2 olasılık (tek seferlik, tüm sisteme)
         masked = out.final.copy()
