@@ -739,7 +739,7 @@ with tab3:
 
     st.markdown("#### 📊 Bir Sonraki Çekiliş için Olasılık Skorları")
     score_df = pd.DataFrame({
-        "sayi": np.arange(1, 91),
+        "sayi": np.arange(1, GAME["total"] + 1),
         "Markov": prob_out.markov,
         "Bayesian": prob_out.bayesian,
         "Sapma": prob_out.deviation,
