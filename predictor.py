@@ -131,7 +131,9 @@ class Predictor:
         delta = log_p - baseline
         return float(1.0 / (1.0 + math.exp(-delta)))
 
-    def generate_system_tickets(self, pool_size: int = 7) -> tuple[list[dict], list[int]]:
+    def generate_system_tickets(
+        self, pool_size: int = 7, randomize_pool: bool = False
+    ) -> tuple[list[dict], list[int]]:
         """
         Sistemli oyun: top-N olasılıklı sayılardan tüm 6'lı kombinasyonları
         üretir. Filtreler uygulanmaz — sistemin matematiksel garantisini
@@ -140,14 +142,30 @@ class Predictor:
         Garanti: havuzdaki N sayıdan en az 3'ü çekilişte çıkarsa, üretilen
         kolonlardan EN AZ BİRİ 3+ tutar.
 
+        Args:
+            pool_size: havuz boyutu (7-10 arası mantıklı).
+            randomize_pool: False ise her zaman aynı top-N (deterministik).
+                True ise top-(N+8) içinden olasılık-ağırlıklı rastgele örnekleme
+                yapar; her çağrıda farklı pool gelir ama yine "akıllı" sayılar.
+
         Returns:
-            (tickets, pool) — pool: top-N olasılıklı sayı listesi (sıralı)
+            (tickets, pool) — pool: havuza alınan sayılar (sıralı)
         """
         if not 6 <= pool_size <= 12:
             raise ValueError("pool_size 6-12 arasında olmalı")
 
         out = self.get_probabilities()
-        pool = sorted(int(i + 1) for i in np.argsort(out.final)[-pool_size:])
+
+        if randomize_pool:
+            top_k = min(self.total_numbers, pool_size + 8)
+            top_idx = np.argsort(out.final)[-top_k:]
+            sub_weights = out.final[top_idx].copy()
+            sub_weights = sub_weights / sub_weights.sum()
+            rng = np.random.default_rng()
+            chosen = rng.choice(top_idx, size=pool_size, replace=False, p=sub_weights)
+            pool = sorted(int(i + 1) for i in chosen)
+        else:
+            pool = sorted(int(i + 1) for i in np.argsort(out.final)[-pool_size:])
 
         # Joker ve Süper Star: pool dışı en yüksek 2 olasılık (tek seferlik, tüm sisteme)
         masked = out.final.copy()

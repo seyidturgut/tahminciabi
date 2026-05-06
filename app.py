@@ -11,7 +11,7 @@ from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 import auto_tracker
 
-APP_VERSION = "v2.6.0"
+APP_VERSION = "v2.6.1"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -198,10 +198,15 @@ with st.sidebar:
             options=[7, 8, 9, 10],
             value=7,
         )
+        randomize_pool = st.toggle(
+            "🎲 Her üretimde farklı havuz",
+            value=True,
+            help=("Açık: top 15-20 olasılıklı sayıdan ağırlıklı rastgele seçim — "
+                  "her tıklamada farklı pool. Kapalı: her zaman aynı top-N (deterministik)."),
+        )
         from math import comb
         sys_kolon = comb(pool_size, 6)
         sys_cost = sys_kolon * 25
-        # Hipergeometrik P(3+ winner pool'da)
         c_total = comb(90, pool_size)
         p_lt3 = sum(comb(6, k) * comb(84, pool_size - k) / c_total for k in range(3))
         p_3plus = (1 - p_lt3) * 100
@@ -213,6 +218,7 @@ with st.sidebar:
         num_tickets = sys_kolon
     else:
         pool_size = None
+        randomize_pool = False
         num_tickets = st.slider("Üretilecek Kolon Sayısı", 1, 10, 5)
 
     st.divider()
@@ -282,7 +288,9 @@ with tab1:
     if st.button("🚀 KUPON ÜRET", width="stretch", type="primary"):
         if strategy == "🎯 Sistemli Oyun (Garanti)":
             with st.spinner(f"Sistem {pool_size} hazırlanıyor..."):
-                tickets, pool = predictor.generate_system_tickets(pool_size=pool_size)
+                tickets, pool = predictor.generate_system_tickets(
+                    pool_size=pool_size, randomize_pool=randomize_pool
+                )
             st.session_state.current_tickets = tickets
             st.session_state.current_pool = pool
             st.success(
