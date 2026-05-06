@@ -34,8 +34,9 @@ def _read_csv(path: str = DATA_FILE) -> pd.DataFrame:
 
 
 def _is_legacy_csv(df: pd.DataFrame) -> bool:
-    """Eski mock veri CSV'sinde cekilis_no kolonu yoktur."""
-    return "cekilis_no" not in df.columns
+    """Eski format: cekilis_no, joker veya superstar kolonu yoksa legacy."""
+    required = {"cekilis_no", "joker", "superstar"}
+    return not required.issubset(set(df.columns))
 
 
 def load_data(progress_callback=None) -> pd.DataFrame:
@@ -62,6 +63,8 @@ def load_data(progress_callback=None) -> pd.DataFrame:
                     "cekilis_no": d["cekilis_no"],
                     "tarih": d["tarih"],
                     **{f"sayi_{i+1}": d["sayilar"][i] for i in range(DRAW_SIZE)},
+                    "joker": d.get("joker"),
+                    "superstar": d.get("superstar"),
                 })
             if new_rows:
                 df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)

@@ -73,14 +73,27 @@ def _request_with_retry(session: requests.Session, url: str, retries: int = 3) -
 
 
 def _parse_draw_html(html: str, draw_no: int) -> Optional[dict]:
-    """HTML'den (tarih, 6 ana sayı) çıkarır. Bulamazsa None."""
-    before_plus = html.split("/bplus.gif")[0]
-    balls = re.findall(r"/b(\d+)\.gif", before_plus)
-    if len(balls) < 6:
+    """HTML'den (tarih, 6 ana sayı, joker, süper star) çıkarır."""
+    parts = html.split("/bplus.gif")
+    if len(parts) < 2:
         return None
-    main6 = sorted({int(x) for x in balls[:6]})
+
+    before_plus = parts[0]
+    after_plus = parts[1]
+
+    main_balls = re.findall(r"/b(\d+)\.gif", before_plus)
+    if len(main_balls) < 6:
+        return None
+    main6 = sorted({int(x) for x in main_balls[:6]})
     if len(main6) != 6 or not all(1 <= n <= 90 for n in main6):
         return None
+
+    # bplus sonrasında ilk iki top: joker + süper star (resmi Milli Piyango formatı)
+    next_section = after_plus.split("/bplus.gif")[0]
+    bonus_balls = re.findall(r"/b(\d+)\.gif", next_section)
+    joker = int(bonus_balls[0]) if len(bonus_balls) >= 1 else None
+    superstar = int(bonus_balls[1]) if len(bonus_balls) >= 2 else None
+
     dm = DATE_RE.search(html)
     if not dm:
         return None
@@ -93,6 +106,8 @@ def _parse_draw_html(html: str, draw_no: int) -> Optional[dict]:
         "cekilis_no": draw_no,
         "tarih": pd.Timestamp(year=year, month=month, day=day),
         "sayilar": main6,
+        "joker": joker,
+        "superstar": superstar,
     }
 
 
@@ -176,6 +191,8 @@ def fetch_full_history(
             "cekilis_no": r["cekilis_no"],
             "tarih": r["tarih"],
             **{f"sayi_{i+1}": r["sayilar"][i] for i in range(6)},
+            "joker": r.get("joker"),
+            "superstar": r.get("superstar"),
         }
         for r in rows
     ])

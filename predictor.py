@@ -128,17 +128,51 @@ class Predictor:
         delta = log_p - baseline
         return float(1.0 / (1.0 + math.exp(-delta)))
 
+    def _pick_joker_and_superstar(
+        self, main6: tuple[int, ...], weights: np.ndarray, rng: np.random.Generator
+    ) -> tuple[int, int]:
+        """
+        Ana 6'da olmayan sayılardan ağırlıklı olarak Joker ve Süper Star seçer.
+        Joker ve Süper Star resmi çekilişte ayrı toplar — bizim üretimimizde de
+        ana 6 ile çakışmamasına özen gösteriyoruz.
+        """
+        excluded = set(main6)
+        mask = np.array([(i + 1) not in excluded for i in range(self.total_numbers)])
+        avail_w = weights * mask
+        if avail_w.sum() <= 0:
+            avail_w = mask.astype(float)
+        avail_w = avail_w / avail_w.sum()
+        joker = int(rng.choice(np.arange(1, self.total_numbers + 1), p=avail_w))
+
+        excluded.add(joker)
+        mask = np.array([(i + 1) not in excluded for i in range(self.total_numbers)])
+        avail_w = weights * mask
+        if avail_w.sum() <= 0:
+            avail_w = mask.astype(float)
+        avail_w = avail_w / avail_w.sum()
+        superstar = int(rng.choice(np.arange(1, self.total_numbers + 1), p=avail_w))
+
+        return joker, superstar
+
     def generate_tickets(
         self,
         num_tickets: int = 5,
         strategy: str = "Profesör Modu",
         mc_iterations: int = 80000,
-    ) -> tuple[list[tuple[int, ...]], int, list[float]]:
+    ) -> tuple[list[dict], int]:
+        """
+        Her kupon için 6 ana sayı + Joker + Süper Star + güven skoru üretir.
+
+        Returns:
+            (tickets, attempts) — tickets her biri:
+            {"main": (n,n,n,n,n,n), "joker": int, "superstar": int, "confidence": float}
+        """
         weights, top20 = self._weights_for_strategy(strategy)
         all_numbers = np.arange(1, self.total_numbers + 1)
         cold_numbers = self.gaps_df.head(15)["sayi"].values
 
-        valid: list[tuple[int, ...]] = []
+        valid: list[dict] = []
+        seen_main: set[tuple[int, ...]] = set()
         attempts = 0
         rng = np.random.default_rng()
 
@@ -147,7 +181,6 @@ class Predictor:
             try:
                 combo = rng.choice(all_numbers, size=self.draw_size, replace=False, p=weights)
             except ValueError:
-                # Ağırlık vektörü 1'e tam toplanmazsa (float precision)
                 weights = weights / weights.sum()
                 combo = rng.choice(all_numbers, size=self.draw_size, replace=False, p=weights)
             combo = list(int(x) for x in combo)
@@ -158,12 +191,20 @@ class Predictor:
                     combo[0] = forced
 
             combo_t = tuple(sorted(combo))
-            if combo_t in valid:
+            if combo_t in seen_main:
                 continue
             if not self._is_valid_combination(combo_t, top20=top20):
                 continue
-            valid.append(combo_t)
 
-        confidences = [self._ticket_confidence(c) if strategy == "Profesör Modu" else 0.0
-                       for c in valid]
-        return valid, attempts, confidences
+            joker, superstar = self._pick_joker_and_superstar(combo_t, weights, rng)
+            conf = self._ticket_confidence(combo_t) if strategy == "Profesör Modu" else 0.0
+
+            valid.append({
+                "main": combo_t,
+                "joker": joker,
+                "superstar": superstar,
+                "confidence": conf,
+            })
+            seen_main.add(combo_t)
+
+        return valid, attempts

@@ -10,7 +10,7 @@ from predictor import Predictor
 from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import budget_summary, DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 
-APP_VERSION = "v2.1.0"
+APP_VERSION = "v2.2.0"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -44,6 +44,29 @@ st.markdown("""
         background-color: #00E676; color: #121212 !important;
         border-radius: 50%; border: 2px solid #00E676;
         box-shadow: 0 0 15px #00E676;
+    }
+    .ball-joker {
+        width: 50px; height: 50px;
+        display: flex; align-items: center; justify-content: center;
+        background-color: #1a1c23; border-radius: 50%;
+        border: 2px solid #FF9800; color: #FF9800;
+        text-shadow: 0 0 10px rgba(255, 152, 0, 0.5);
+    }
+    .ball-superstar {
+        width: 50px; height: 50px;
+        display: flex; align-items: center; justify-content: center;
+        background-color: #1a1c23; border-radius: 50%;
+        border: 2px solid #BB86FC; color: #BB86FC;
+        text-shadow: 0 0 10px rgba(187, 134, 252, 0.5);
+    }
+    .bonus-label {
+        font-size: 10px; color: #888; align-self: center;
+        font-weight: 600; letter-spacing: 0.5px;
+        margin: 0 10px 0 20px;
+    }
+    .ticket-divider {
+        width: 1px; height: 40px; background: #333; margin: 0 5px;
+        align-self: center;
     }
     div[data-testid="metric-container"] {
         background-color: #1a1c23; border: 1px solid #2e303e;
@@ -174,11 +197,26 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 
-def render_ticket(numbers, drawn_numbers=None, badge_html=""):
+def render_ticket(numbers, joker=None, superstar=None,
+                  drawn_numbers=None, drawn_joker=None, drawn_superstar=None,
+                  badge_html=""):
     parts = []
     for n in numbers:
         cls = "ball-match" if drawn_numbers and n in drawn_numbers else "ball"
         parts.append(f"<div class='{cls}'>{n:02d}</div>")
+
+    if joker is not None:
+        parts.append("<div class='ticket-divider'></div>")
+        parts.append("<span class='bonus-label'>JOKER</span>")
+        joker_cls = "ball-match" if drawn_joker is not None and joker == drawn_joker else "ball-joker"
+        parts.append(f"<div class='{joker_cls}'>{joker:02d}</div>")
+
+    if superstar is not None:
+        parts.append("<span class='bonus-label'>SÜPER STAR</span>")
+        ss_cls = ("ball-match" if drawn_superstar is not None and superstar == drawn_superstar
+                  else "ball-superstar")
+        parts.append(f"<div class='{ss_cls}'>{superstar:02d}</div>")
+
     st.markdown(f"<div class='ticket-box'>{''.join(parts)}{badge_html}</div>",
                 unsafe_allow_html=True)
 
@@ -194,34 +232,36 @@ with tab1:
 
     if "current_tickets" not in st.session_state:
         st.session_state.current_tickets = []
-        st.session_state.current_confidences = []
 
     if st.button("🚀 KUPON ÜRET", width="stretch", type="primary"):
         with st.spinner("Olasılık motoru çalışıyor, filtreler uygulanıyor..."):
-            tickets, attempts, confidences = predictor.generate_tickets(
+            tickets, attempts = predictor.generate_tickets(
                 num_tickets=num_tickets, strategy=strategy_clean
             )
         st.session_state.current_tickets = tickets
-        st.session_state.current_confidences = confidences
         st.success(f"✅ {len(tickets)} kupon üretildi ({attempts} varyasyon denendi).")
 
     if st.session_state.current_tickets:
-        st.markdown("### 🎲 Üretilen Kolonlar")
-        for ticket, conf in zip(st.session_state.current_tickets,
-                                st.session_state.current_confidences):
+        st.markdown("### 🎲 Üretilen Kolonlar (6 Ana + Joker + Süper Star)")
+        for ticket in st.session_state.current_tickets:
+            conf = ticket.get("confidence", 0.0)
             badge = ""
             if conf > 0:
                 color = "#00E676" if conf >= 0.55 else ("#ffd54f" if conf >= 0.5 else "#ff7043")
                 badge = (f"<div style='color:{color};font-size:14px;align-self:center;"
                          f"margin-left:15px;'>Güven: %{conf*100:.1f}</div>")
-            render_ticket(list(ticket), badge_html=badge)
+            render_ticket(
+                list(ticket["main"]),
+                joker=ticket.get("joker"),
+                superstar=ticket.get("superstar"),
+                badge_html=badge,
+            )
 
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("💾 KUPONLARI SİSTEME KAYDET", width="stretch"):
             save_tickets(st.session_state.current_tickets, strategy_clean)
             st.toast("Kuponlar kaydedildi!")
             st.session_state.current_tickets = []
-            st.session_state.current_confidences = []
             st.rerun()
 
     st.divider()
@@ -301,9 +341,16 @@ with tab2:
     else:
         with st.expander("🔍 Sonuç Kontrol Paneli", expanded=True):
             draw_input = st.text_input(
-                "Çekiliş Sonucunu Girin (Örn: 5, 12, 34, 56, 78, 89)",
+                "6 Ana Sayıyı Girin (Örn: 5, 12, 34, 56, 78, 89)",
                 placeholder="Sayıları virgülle ayırarak giriniz...",
             )
+            jc1, jc2 = st.columns(2)
+            joker_input = jc1.number_input("Joker (1-90)", min_value=0, max_value=90,
+                                           value=0, step=1,
+                                           help="0 = girilmedi")
+            ss_input = jc2.number_input("Süper Star (1-90)", min_value=0, max_value=90,
+                                        value=0, step=1,
+                                        help="0 = girilmedi")
             drawn_numbers = []
             if draw_input:
                 try:
@@ -313,6 +360,8 @@ with tab2:
                         drawn_numbers = []
                 except ValueError:
                     st.error("Lütfen geçerli sayılar girin!")
+            drawn_joker = joker_input if joker_input > 0 else None
+            drawn_ss = ss_input if ss_input > 0 else None
 
         st.divider()
         col1, col2 = st.columns([4, 1])
@@ -325,17 +374,38 @@ with tab2:
         for record in reversed(saved):
             st.caption(f"📅 {record['tarih']} | 🧠 Strateji: {record['strateji']}")
             for ticket in record["kuponlar"]:
-                match_count = len(set(ticket).intersection(drawn_numbers)) if drawn_numbers else 0
+                # Backward compat: legacy = list[int], new = dict
+                if isinstance(ticket, dict):
+                    main = list(ticket["main"]) if "main" in ticket else list(ticket.get("kuponlar", []))
+                    t_joker = ticket.get("joker")
+                    t_ss = ticket.get("superstar")
+                else:
+                    main = list(ticket)
+                    t_joker = None
+                    t_ss = None
+
+                match_count = len(set(main).intersection(drawn_numbers)) if drawn_numbers else 0
+                joker_hit = t_joker is not None and drawn_joker is not None and t_joker == drawn_joker
+                ss_hit = t_ss is not None and drawn_ss is not None and t_ss == drawn_ss
                 badge = ""
                 if drawn_numbers:
+                    parts_b = []
                     if match_count >= 3:
-                        badge = (f"<div style='color:#111;background:#00E676;padding:5px 15px;"
-                                 f"border-radius:8px;font-size:16px;align-self:center;"
-                                 f"margin-left:15px;'>{match_count} BİLDİNİZ! 🏆</div>")
-                    else:
-                        badge = (f"<div style='color:#ff4444;font-size:16px;align-self:center;"
-                                 f"margin-left:15px;'>{match_count} Bildiniz</div>")
-                render_ticket(list(ticket), drawn_numbers=drawn_numbers, badge_html=badge)
+                        parts_b.append(f"<span style='color:#111;background:#00E676;padding:3px 10px;"
+                                       f"border-radius:6px;font-size:14px;'>{match_count} ANA 🏆</span>")
+                    elif match_count > 0:
+                        parts_b.append(f"<span style='color:#ff4444;font-size:14px;'>{match_count} ana</span>")
+                    if joker_hit:
+                        parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
+                    if ss_hit:
+                        parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
+                    if parts_b:
+                        badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
+                                 f"gap:8px;'>{''.join(parts_b)}</div>")
+                render_ticket(main, joker=t_joker, superstar=t_ss,
+                              drawn_numbers=drawn_numbers,
+                              drawn_joker=drawn_joker, drawn_superstar=drawn_ss,
+                              badge_html=badge)
             st.markdown("<br>", unsafe_allow_html=True)
 
 # TAB 3: STATISTICS
@@ -424,25 +494,49 @@ with tab4:
                 latest = fetch_latest_draw()
             date_str = latest["tarih"].strftime("%d-%m-%Y")
             drawn = latest["sayilar"]
+            d_joker = latest.get("joker")
+            d_ss = latest.get("superstar")
             st.success(f"✅ Çekiliş #{latest['cekilis_no']} — {date_str}")
 
             st.markdown("### 🎲 Çekiliş Sonucu")
-            render_ticket(drawn, drawn_numbers=drawn)
+            render_ticket(drawn, joker=d_joker, superstar=d_ss,
+                          drawn_numbers=drawn,
+                          drawn_joker=d_joker, drawn_superstar=d_ss)
 
             saved = load_saved_tickets()
             if saved:
                 st.markdown("### 📊 Sizin Kuponlarınızdaki Durum")
                 for record in reversed(saved):
                     for ticket in record["kuponlar"]:
-                        m = len(set(ticket).intersection(drawn))
-                        if m >= 3:
-                            badge = (f"<div style='color:#111;background:#00E676;padding:5px 15px;"
-                                     f"border-radius:8px;font-size:16px;align-self:center;"
-                                     f"margin-left:15px;'>{m} BİLDİNİZ! 🏆</div>")
+                        if isinstance(ticket, dict):
+                            main = list(ticket["main"]) if "main" in ticket else list(ticket.get("kuponlar", []))
+                            t_joker = ticket.get("joker")
+                            t_ss = ticket.get("superstar")
                         else:
-                            badge = (f"<div style='color:#ff4444;font-size:16px;align-self:center;"
-                                     f"margin-left:15px;'>{m} Bildiniz</div>")
-                        render_ticket(list(ticket), drawn_numbers=drawn, badge_html=badge)
+                            main = list(ticket)
+                            t_joker = None
+                            t_ss = None
+                        m = len(set(main).intersection(drawn))
+                        joker_hit = t_joker is not None and t_joker == d_joker
+                        ss_hit = t_ss is not None and t_ss == d_ss
+                        parts_b = []
+                        if m >= 3:
+                            parts_b.append(f"<span style='color:#111;background:#00E676;padding:3px 10px;"
+                                           f"border-radius:6px;font-size:14px;'>{m} ANA 🏆</span>")
+                        elif m > 0:
+                            parts_b.append(f"<span style='color:#ff4444;font-size:14px;'>{m} ana</span>")
+                        if joker_hit:
+                            parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
+                        if ss_hit:
+                            parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
+                        badge = ""
+                        if parts_b:
+                            badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
+                                     f"gap:8px;'>{''.join(parts_b)}</div>")
+                        render_ticket(main, joker=t_joker, superstar=t_ss,
+                                      drawn_numbers=drawn,
+                                      drawn_joker=d_joker, drawn_superstar=d_ss,
+                                      badge_html=badge)
             else:
                 st.info("Sistemde karşılaştırılacak kayıtlı kuponunuz bulunmuyor.")
         except ScrapeFailedError as e:
