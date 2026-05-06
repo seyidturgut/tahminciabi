@@ -2,12 +2,20 @@ import pandas as pd
 import numpy as np
 
 class MathEngine:
-    def __init__(self, df, total_numbers=90, draw_size=6):
+    def __init__(self, df, total_numbers=90, draw_size=6, number_cols=None):
+        """
+        Args:
+            df: çekiliş geçmişi DataFrame.
+            total_numbers: oyun aralığı (örn. 90, 34, 80).
+            draw_size: ANA sayı kolonu sayısı — frekans/gap analizine giren.
+                Sayısal Loto: 6 (çekilen), Şans Topu: 5, On Numara: 22 (çekilen).
+            number_cols: kolon adları override; None ise sayi_1..sayi_{draw_size}.
+        """
         self.df = df
         self.total_numbers = total_numbers
         self.draw_size = draw_size
-        self.number_cols = [f'sayi_{i+1}' for i in range(draw_size)]
-        
+        self.number_cols = number_cols or [f'sayi_{i+1}' for i in range(draw_size)]
+
         # Sadece sayıların olduğu DataFrame
         self.numbers_df = self.df[self.number_cols]
         

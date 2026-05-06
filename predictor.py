@@ -20,17 +20,39 @@ import pandas as pd
 
 from analytics.probability_engine import ModelOutput, compute as compute_probabilities
 from math_engine import MathEngine
+from games import get_game, primes_for_game, number_columns
 
 PRIMES = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47,
           53, 59, 61, 67, 71, 73, 79, 83, 89}
 
 
 class Predictor:
-    def __init__(self, df: pd.DataFrame, total_numbers: int = 90, draw_size: int = 6):
+    def __init__(self, df: pd.DataFrame, total_numbers: int = 90, draw_size: int = 6,
+                 game: Optional[dict] = None):
+        """
+        Args:
+            df: çekiliş geçmişi DataFrame.
+            total_numbers/draw_size: backward-compat parametreler.
+            game: oyun konfigi (games.py). Verilirse total/picks/bonuses/primes
+                game'den okunur, picks ile draw_size override edilir.
+        """
+        if game is None:
+            game = get_game("sayisal_loto")
+        self.game = game
         self.df = df
-        self.total_numbers = total_numbers
-        self.draw_size = draw_size
-        self.engine = MathEngine(df, total_numbers, draw_size)
+        self.total_numbers = game.get("total", total_numbers)
+        # picks: kupon üretiminde her kuponun ana sayı kapasitesi
+        self.picks = game.get("picks", draw_size)
+        # drawn: her çekilişte küreden gelen sayı sayısı (frekans/gap için)
+        self.drawn = game.get("drawn", self.picks)
+        # geriye uyumluluk için draw_size = picks
+        self.draw_size = self.picks
+        self.bonuses = game.get("bonuses", [])
+        self.primes = primes_for_game(game)
+
+        cols = number_columns(game)
+        self.engine = MathEngine(df, total_numbers=self.total_numbers,
+                                 draw_size=len(cols), number_cols=cols)
 
         self.freq_df = self.engine.calculate_frequencies()
         self.gaps_df = self.engine.calculate_gaps()
@@ -54,7 +76,7 @@ class Predictor:
         if not (self.mean_sum - 1.5 * self.std_sum <= s <= self.mean_sum + 1.5 * self.std_sum):
             return False
 
-        # 2. Maks 3 ardışık
+        # 2. Ardışık limit — picks'e göre ölçeklenir
         max_consec = 1
         cur = 1
         for i in range(1, len(combo)):
@@ -63,7 +85,8 @@ class Predictor:
                 max_consec = max(max_consec, cur)
             else:
                 cur = 1
-        if max_consec > 3:
+        consec_limit = max(3, self.picks // 2)
+        if max_consec > consec_limit:
             return False
 
         # 3. Tek/çift dengesi
@@ -72,8 +95,9 @@ class Predictor:
             return False
 
         # 4. Asal denge
-        prime_count = sum(1 for x in combo if x in PRIMES)
-        if prime_count == 0 or prime_count > 3:
+        prime_count = sum(1 for x in combo if x in self.primes)
+        max_primes = max(2, self.picks // 2)
+        if prime_count == 0 or prime_count > max_primes:
             return False
 
         # 5. Ondalık dağılım
@@ -83,13 +107,16 @@ class Predictor:
         if any(c > 3 for c in decade_counts.values()):
             return False
 
-        # 6. Pozisyonel sınırlar
-        for i, num in enumerate(combo):
-            ps = self.pos_stats[i]
-            lo = max(1, ps["mean"] - 2.5 * ps["std"])
-            hi = min(self.total_numbers, ps["mean"] + 2.5 * ps["std"])
-            if not (lo <= num <= hi):
-                return False
+        # 6. Pozisyonel sınırlar — sadece picks == drawn olduğunda anlamlı
+        # (On Numara'da 22 çekilen sayı için pozisyon istatistiği var ama
+        #  10 picks üretiyoruz; bu kontrolü atla)
+        if self.picks == self.drawn and len(combo) <= len(self.pos_stats):
+            for i, num in enumerate(combo):
+                ps = self.pos_stats[i]
+                lo = max(1, ps["mean"] - 2.5 * ps["std"])
+                hi = min(self.total_numbers, ps["mean"] + 2.5 * ps["std"])
+                if not (lo <= num <= hi):
+                    return False
 
         # 7. Profesör Modu: en az 2 yüksek-skorlu sayı
         if top20 is not None:
