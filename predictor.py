@@ -151,8 +151,8 @@ class Predictor:
         Returns:
             (tickets, pool) — pool: havuza alınan sayılar (sıralı)
         """
-        if not 6 <= pool_size <= 12:
-            raise ValueError("pool_size 6-12 arasında olmalı")
+        if not 6 <= pool_size <= 20:
+            raise ValueError("pool_size 6-20 arasında olmalı")
 
         out = self.get_probabilities()
 
