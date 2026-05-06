@@ -117,8 +117,8 @@ def _is_winning(game: dict, main_hits: int, bonus_hits: dict) -> bool:
         return main_hits >= 6 or main_hits == 0
     if game["key"] == "sans_topu":
         st_hit = bonus_hits.get("sans_topu", False)
-        # Şans Topu: 1+1 minimumdan başlar
-        return (main_hits >= 3) or (main_hits >= 1 and st_hit) or (main_hits >= 2 and st_hit)
+        # 3+ ana her zaman ödüllü; 0/1/2/3/4/5 ana + Şans Topu da ödüllü
+        return main_hits >= 3 or st_hit
     # sayisal_loto: 3+ ana ya da joker/ss
     return main_hits >= 3 or bonus_hits.get("joker") or bonus_hits.get("superstar")
 

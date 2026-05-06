@@ -33,7 +33,9 @@ GAMES: dict[str, dict] = {
         "csv_path": "gecmis_cekilisler.csv",  # mevcut dosya — geriye uyumluluk
         "draw_days": [0, 2, 5],   # Pzt, Çar, Cmt
         "ticket_cost_tl": 25,
-        "prizes_tl": {6: 100_000_000, 5: 150_000, 4: 800, 3: 30},
+        # Son 10 çekilişin medyanı (lototurkiye 2026 verileri).
+        # Çekilişten çekilişe değişir; UI'dan override edilebilir.
+        "prizes_tl": {6: 930_000_000, 5: 2_200_000, 4: 13_500, 3: 890},
         "joker_bonus_tl": 50,
         "ss_bonus_tl": 100,
         "strategies": ["multi_mini", "system", "professor", "super_hybrid",
@@ -53,13 +55,16 @@ GAMES: dict[str, dict] = {
         "scrape_slug": "SANS-TOPU-SISAL",
         "csv_path": "gecmis_sans_topu.csv",
         "draw_days": [2, 6],  # Çar, Paz
-        "ticket_cost_tl": 7,  # tahmini, kullanıcı override edebilir
-        # (main_hits, bonus_hits) → TL
+        "ticket_cost_tl": 7,
+        # Son 10 çekilişin medyanı. (main_hits, st_hit) → TL.
+        # 0+1 kategorisi de var (ana 0, Şans Topu tutturma).
         "prizes_tl": {
-            (5, 1): 5_000_000, (5, 0): 50_000,
-            (4, 1): 5_000, (4, 0): 200,
-            (3, 1): 100, (3, 0): 25,
-            (2, 1): 15, (1, 1): 5,
+            (5, 1): 4_400_000, (5, 0): 50_000,
+            (4, 1): 3_400, (4, 0): 320,
+            (3, 1): 185, (3, 0): 52,
+            (2, 1): 74,
+            (1, 1): 36,
+            (0, 1): 36,
         },
         "strategies": ["multi_mini", "system", "professor", "super_hybrid",
                        "hot", "cold"],
@@ -76,9 +81,10 @@ GAMES: dict[str, dict] = {
         "scrape_slug": "ON-NUMARA-SISAL",
         "csv_path": "gecmis_on_numara.csv",
         "draw_days": [0, 4],  # Pzt, Cum
-        "ticket_cost_tl": 4,  # tahmini
-        # match_count → TL (0 doğru ödüllü)
-        "prizes_tl": {10: 1_000_000, 9: 30_000, 8: 2_000, 7: 200, 6: 30, 0: 50},
+        "ticket_cost_tl": 4,
+        # Son 10 çekilişin medyanı (lototurkiye 2026).
+        # 0 doğru = "Hiç Bilmeyen" — ödüllü kategori.
+        "prizes_tl": {10: 2_300_000, 9: 32_000, 8: 1_900, 7: 360, 6: 63, 0: 53},
         "strategies": ["professor", "super_hybrid", "hot", "cold"],  # sistem yok
     },
 }
