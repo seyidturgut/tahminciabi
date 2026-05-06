@@ -9,7 +9,7 @@ from math_engine import MathEngine
 from predictor import Predictor
 from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 
-APP_VERSION = "v2.0.0"
+APP_VERSION = "v2.0.1"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -67,7 +67,7 @@ if not st.session_state.logged_in:
         st.markdown("<h1 style='text-align: center;'>🔮 Tahminci AI</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: #888;'>Sayısal Loto için profesör seviyesi istatistiksel asistan.</p>", unsafe_allow_html=True)
         password = st.text_input("Şifre", type="password", label_visibility="collapsed", placeholder="Şifreniz...")
-        if st.button("Sisteme Giriş Yap", use_container_width=True, type="primary"):
+        if st.button("Sisteme Giriş Yap", width="stretch", type="primary"):
             if password == "Beyincik**94":
                 st.session_state.logged_in = True
                 st.rerun()
@@ -150,12 +150,12 @@ with st.sidebar:
     num_tickets = st.slider("Üretilecek Kolon Sayısı", 1, 10, 5)
 
     st.divider()
-    if st.button("🔄 ML Modelini Yeniden Eğit", use_container_width=True):
+    if st.button("🔄 ML Modelini Yeniden Eğit", width="stretch"):
         with st.spinner("LightGBM yeniden eğitiliyor..."):
             predictor.get_probabilities(force_train=True)
         st.success("Model güncellendi!")
 
-    if st.button("🌐 Son Çekilişi Senkronize Et", use_container_width=True):
+    if st.button("🌐 Son Çekilişi Senkronize Et", width="stretch"):
         try:
             with st.spinner("Son çekiliş çekiliyor..."):
                 st.cache_data.clear()
@@ -195,7 +195,7 @@ with tab1:
         st.session_state.current_tickets = []
         st.session_state.current_confidences = []
 
-    if st.button("🚀 KUPON ÜRET", use_container_width=True, type="primary"):
+    if st.button("🚀 KUPON ÜRET", width="stretch", type="primary"):
         with st.spinner("Olasılık motoru çalışıyor, filtreler uygulanıyor..."):
             tickets, attempts, confidences = predictor.generate_tickets(
                 num_tickets=num_tickets, strategy=strategy_clean
@@ -216,7 +216,7 @@ with tab1:
             render_ticket(list(ticket), badge_html=badge)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("💾 KUPONLARI SİSTEME KAYDET", use_container_width=True):
+        if st.button("💾 KUPONLARI SİSTEME KAYDET", width="stretch"):
             save_tickets(st.session_state.current_tickets, strategy_clean)
             st.toast("Kuponlar kaydedildi!")
             st.session_state.current_tickets = []
@@ -249,7 +249,7 @@ with tab2:
         col1, col2 = st.columns([4, 1])
         col1.markdown("### 📋 Oynanan Kuponlar")
         with col2:
-            if st.button("🗑️ Tümünü Sil", use_container_width=True):
+            if st.button("🗑️ Tümünü Sil", width="stretch"):
                 delete_all_tickets()
                 st.rerun()
 
@@ -279,14 +279,14 @@ with tab3:
     with c1:
         st.markdown("#### 🔥 En Sıcak Sayılar")
         st.dataframe(freq_df.head(10).style.format({"yuzde": "{:.2f}%"}),
-                     use_container_width=True)
+                     width="stretch")
     with c2:
         st.markdown("#### 🧊 En Soğuk Sayılar")
         st.dataframe(freq_df.tail(10).style.format({"yuzde": "{:.2f}%"}),
-                     use_container_width=True)
+                     width="stretch")
     with c3:
         st.markdown("#### ⏳ Gecikme (Gap) Analizi")
-        st.dataframe(gaps_df.head(10), use_container_width=True)
+        st.dataframe(gaps_df.head(10), width="stretch")
 
     st.divider()
     mean_sum, std_sum = engine.get_sum_distribution_stats()
@@ -332,24 +332,24 @@ with tab3:
                  labels={"sayi": "Sayı", "Final": "Olasılık"})
     fig.update_layout(plot_bgcolor="#0E1117", paper_bgcolor="#0E1117",
                       font_color="#FAFAFA", xaxis=dict(tickmode="linear"))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     with st.expander("Tüm Sayılar — Model Bazında Olasılıklar"):
         st.dataframe(score_df.style.format({
             "Markov": "{:.4f}", "Bayesian": "{:.4f}", "Sapma": "{:.4f}",
             "ML (LightGBM)": "{:.4f}", "Final": "{:.4f}",
-        }), use_container_width=True)
+        }), width="stretch")
 
     with st.expander("Geçmiş Veritabanı (Son 100 Çekiliş)"):
         st.dataframe(df.sort_values("tarih", ascending=False).head(100),
-                     use_container_width=True)
+                     width="stretch")
 
 # TAB 4: AUTOMATION
 with tab4:
     st.subheader("🤖 Canlı Sonuç Asistanı")
     st.markdown("Tek tıkla en güncel Sayısal Loto sonucunu çekip kayıtlı kuponlarınızla karşılaştırır.")
 
-    if st.button("🌐 Güncel Sonucu Getir", use_container_width=True, type="primary"):
+    if st.button("🌐 Güncel Sonucu Getir", width="stretch", type="primary"):
         try:
             with st.spinner("Son çekiliş kaynaktan çekiliyor..."):
                 latest = fetch_latest_draw()
