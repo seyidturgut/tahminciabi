@@ -195,8 +195,8 @@ with st.sidebar:
     if strategy == "🎯 Sistemli Oyun (Garanti)":
         pool_size = st.select_slider(
             "Sistem Boyutu (havuzdaki sayı)",
-            options=[7, 8, 9, 10],
-            value=7,
+            options=[6, 7, 8, 9, 10, 12, 15, 20],
+            value=8,
         )
         randomize_pool = st.toggle(
             "🎲 Her üretimde farklı havuz",
@@ -212,9 +212,31 @@ with st.sidebar:
         p_3plus = (1 - p_lt3) * 100
         st.caption(
             f"**Sistem {pool_size}**: {sys_kolon} kolon × 25 TL = "
-            f"**{sys_cost:,} TL**. Havuzda 3+ doğru çıkma şansı **%{p_3plus:.0f}**."
+            f"**{sys_cost:,} TL**. **Garanti: havuzda 3+ çıkarsa en az 1 kupon tutar.** "
+            f"Bunun olma ihtimali **%{p_3plus:.1f}**."
             .replace(",", ".")
         )
+        # Show probability scale
+        with st.expander("📊 Sistem Boyutları ve Olasılıklar", expanded=False):
+            prob_data = []
+            for size in [6, 7, 8, 9, 10, 12, 15, 20]:
+                c_t = comb(90, size)
+                p_lt = sum(comb(6, k) * comb(84, size - k) / c_t for k in range(3))
+                p_plus = (1 - p_lt) * 100
+                kol = comb(size, 6)
+                cost = kol * 25
+                prob_data.append({
+                    "Sistem": f"S{size}",
+                    "Kolon": f"{kol:,}",
+                    "Maliyet": f"{cost:,} TL",
+                    "3+ İhtimali": f"%{p_plus:.2f}"
+                })
+            import pandas as pd
+            st.dataframe(pd.DataFrame(prob_data), use_container_width=True)
+            st.markdown(
+                "💡 **Not:** Havuzdaki 3+ sayının çıkma şansı matematiksel olarak düşüktür. "
+                "Bu oyun stratejisidir — yüksek kazanç hedefi değil, garantili kazanç hedefidir."
+            )
         num_tickets = sys_kolon
     else:
         pool_size = None
