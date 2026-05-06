@@ -11,7 +11,7 @@ from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 import auto_tracker
 
-APP_VERSION = "v2.5.1"
+APP_VERSION = "v2.5.2"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -216,11 +216,6 @@ with st.sidebar:
         num_tickets = st.slider("Üretilecek Kolon Sayısı", 1, 10, 5)
 
     st.divider()
-    if st.button("🔄 ML Modelini Yeniden Eğit", width="stretch"):
-        with st.spinner("LightGBM yeniden eğitiliyor..."):
-            predictor.get_probabilities(force_train=True)
-        st.success("Model güncellendi!")
-
     if st.button("🌐 Son Çekilişi Senkronize Et", width="stretch"):
         try:
             with st.spinner("Son çekiliş çekiliyor..."):
