@@ -780,37 +780,6 @@ with tab4:
                         st.caption(f"📅 Kaydedildi: {w.get('record_tarih', '?')}")
 
     st.divider()
-    st.markdown("### 📱 Telegram Bildirim (Çekiliş Gecesi Otomatik)")
-    with st.expander("🤖 Telegram Bot Kurulumu (5 dakika)", expanded=False):
-        st.markdown(
-            """
-            Çekiliş günleri (Pzt/Çar/Cmt 22:30 TR) **GitHub Actions cron** otomatik tetiklenir,
-            son çekilişi çekip kuponlarını değerlendirir, **Telegram'a sonucu yollar**.
-            Streamlit app'i hiç açmana gerek kalmaz.
-
-            **Senin yapacakların — tek seferlik:**
-
-            1. **Bot oluştur**: Telegram'da `@BotFather`'a yaz → `/newbot` → bot adı + kullanıcı adı
-               ver → sana **token** yollar (örn. `7891234:AAH...`).
-            2. **Chat ID al**: Telegram'da yeni bot'unu bul → `/start` mesajı at →
-               tarayıcıda `https://api.telegram.org/bot<TOKEN>/getUpdates` aç →
-               `"chat":{"id":1234567}` numarasını kopyala.
-            3. **GitHub Secret ekle**: GitHub repo → Settings → Secrets and variables →
-               Actions → New repository secret:
-               - `TELEGRAM_BOT_TOKEN` = bot tokenı
-               - `TELEGRAM_CHAT_ID` = chat ID
-            4. **(Opsiyonel) Manuel test**: GitHub → Actions sekmesi →
-               "Sayısal Loto Sonuç Bildirimi" → "Run workflow". Hemen Telegram mesajı gelmeli.
-
-            **Önemli:** Streamlit Cloud'da kayıttığın kuponlar ephemeral
-            (yeniden başlatınca silinir). Cron'un kupon değerlendirebilmesi için
-            kupon JSON'unun **GitHub repo'da** olması gerekir. Pratik akış:
-            kupon üret → indir/kopyala → repo'ya `oynanan_kuponlar.json` olarak commit et.
-            (Ya da sadece çekilişin sonucunu öğrenmek için secret'ları ayarlaman yeterli.)
-            """
-        )
-
-    st.divider()
     st.markdown("### 🌐 Manuel Anlık Sonuç (Hızlı Bakış)")
     if st.button("Güncel Sonucu Getir", width="stretch", type="primary"):
         try:
