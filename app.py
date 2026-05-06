@@ -11,7 +11,7 @@ from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 import auto_tracker
 
-APP_VERSION = "v2.5.2"
+APP_VERSION = "v2.6.0"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -657,6 +657,37 @@ with tab4:
                                       drawn_joker=d_joker, drawn_superstar=d_ss,
                                       badge_html=badge)
                         st.caption(f"📅 Kaydedildi: {w.get('record_tarih', '?')}")
+
+    st.divider()
+    st.markdown("### 📱 Telegram Bildirim (Çekiliş Gecesi Otomatik)")
+    with st.expander("🤖 Telegram Bot Kurulumu (5 dakika)", expanded=False):
+        st.markdown(
+            """
+            Çekiliş günleri (Pzt/Çar/Cmt 22:30 TR) **GitHub Actions cron** otomatik tetiklenir,
+            son çekilişi çekip kuponlarını değerlendirir, **Telegram'a sonucu yollar**.
+            Streamlit app'i hiç açmana gerek kalmaz.
+
+            **Senin yapacakların — tek seferlik:**
+
+            1. **Bot oluştur**: Telegram'da `@BotFather`'a yaz → `/newbot` → bot adı + kullanıcı adı
+               ver → sana **token** yollar (örn. `7891234:AAH...`).
+            2. **Chat ID al**: Telegram'da yeni bot'unu bul → `/start` mesajı at →
+               tarayıcıda `https://api.telegram.org/bot<TOKEN>/getUpdates` aç →
+               `"chat":{"id":1234567}` numarasını kopyala.
+            3. **GitHub Secret ekle**: GitHub repo → Settings → Secrets and variables →
+               Actions → New repository secret:
+               - `TELEGRAM_BOT_TOKEN` = bot tokenı
+               - `TELEGRAM_CHAT_ID` = chat ID
+            4. **(Opsiyonel) Manuel test**: GitHub → Actions sekmesi →
+               "Sayısal Loto Sonuç Bildirimi" → "Run workflow". Hemen Telegram mesajı gelmeli.
+
+            **Önemli:** Streamlit Cloud'da kayıttığın kuponlar ephemeral
+            (yeniden başlatınca silinir). Cron'un kupon değerlendirebilmesi için
+            kupon JSON'unun **GitHub repo'da** olması gerekir. Pratik akış:
+            kupon üret → indir/kopyala → repo'ya `oynanan_kuponlar.json` olarak commit et.
+            (Ya da sadece çekilişin sonucunu öğrenmek için secret'ları ayarlaman yeterli.)
+            """
+        )
 
     st.divider()
     st.markdown("### 🌐 Manuel Anlık Sonuç (Hızlı Bakış)")
