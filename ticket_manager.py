@@ -15,23 +15,28 @@ def load_saved_tickets():
         print(f"Kuponlar okunamadı: {e}")
         return []
 
-def save_tickets(tickets_list, strategy_name):
-    """Yeni kuponları JSON dosyasına ekler."""
+def save_tickets(tickets_list, strategy_name, valid_from_draw_no=None):
+    """
+    Yeni kuponları JSON dosyasına ekler.
+
+    valid_from_draw_no: bu kuponların geçerli olduğu en küçük çekiliş numarası.
+    Otomatik takip sadece bu numaradan büyük çekilişlerde değerlendirir.
+    """
     existing_data = load_saved_tickets()
-    
-    # Yeni kayıt objesi oluştur
+
     new_record = {
         "id": datetime.now().strftime("%Y%m%d%H%M%S"),
         "tarih": datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
         "strateji": strategy_name,
-        "kuponlar": tickets_list # Liste içinde listeler (veya tuple) [[1,2,3...], [4,5,6...]]
+        "kuponlar": tickets_list,
+        "valid_from_draw_no": valid_from_draw_no or 0,
     }
-    
+
     existing_data.append(new_record)
-    
+
     with open(TICKETS_FILE, "w", encoding="utf-8") as f:
         json.dump(existing_data, f, ensure_ascii=False, indent=4)
-        
+
     return new_record["id"]
 
 def delete_all_tickets():

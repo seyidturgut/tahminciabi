@@ -9,8 +9,9 @@ from math_engine import MathEngine
 from predictor import Predictor
 from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
+import auto_tracker
 
-APP_VERSION = "v2.3.1"
+APP_VERSION = "v2.4.0"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -137,6 +138,21 @@ except Exception as e:
 
 engine, predictor = get_engine_and_predictor(len(df), APP_VERSION)
 
+
+# --- AUTO TRACKER: Her oturumda 1 kez sessizce kontrol et ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def auto_tracker_check(_version: str):
+    """1 saatte 1 kez otomatik takip kontrolü (cache_data ile rate-limit)."""
+    return auto_tracker.check_now()
+
+
+_auto_tracker_settings = auto_tracker.load_settings()
+if _auto_tracker_settings.get("enabled"):
+    try:
+        auto_tracker_check(APP_VERSION)
+    except Exception:
+        pass  # Sessiz başarısızlık — kullanıcı arayüzü etkilenmesin
+
 # --- HEADER ---
 title_col, ver_col = st.columns([5, 1])
 with title_col:
@@ -222,6 +238,14 @@ def render_ticket(numbers, joker=None, superstar=None,
                 unsafe_allow_html=True)
 
 
+# --- Notification: yeni otomatik takip sonuçları ---
+_unread = auto_tracker.get_unread_count() if _auto_tracker_settings.get("enabled") else 0
+if _unread > 0:
+    st.info(
+        f"🔔 **{_unread} yeni çekilişin sonucu** otomatik kontrol edildi. "
+        f"📊 *Otomasyon* sekmesinde detayları görebilirsin."
+    )
+
 # TAB 1: GENERATOR
 with tab1:
     st.subheader(f"🧠 Olasılık Motoru (Strateji: {strategy})")
@@ -260,8 +284,10 @@ with tab1:
 
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("💾 KUPONLARI SİSTEME KAYDET", width="stretch"):
-            save_tickets(st.session_state.current_tickets, strategy_clean)
-            st.toast("Kuponlar kaydedildi!")
+            next_draw = int(df["cekilis_no"].max()) + 1
+            save_tickets(st.session_state.current_tickets, strategy_clean,
+                         valid_from_draw_no=next_draw)
+            st.toast(f"Kuponlar kaydedildi! Çekiliş #{next_draw}'dan itibaren otomatik takip edilir.")
             st.session_state.current_tickets = []
             st.rerun()
 
@@ -465,10 +491,126 @@ with tab3:
 
 # TAB 4: AUTOMATION
 with tab4:
-    st.subheader("🤖 Canlı Sonuç Asistanı")
-    st.markdown("Tek tıkla en güncel Sayısal Loto sonucunu çekip kayıtlı kuponlarınızla karşılaştırır.")
+    st.subheader("🤖 Otomatik Sonuç Takibi")
+    st.markdown(
+        "Açtığında: app her yüklendiğinde son çekilişler otomatik kontrol edilir, "
+        "kayıtlı kuponların değerlendirilir ve aşağıdaki geçmişe işlenir. Sen app'i "
+        "açtığında yeni sonuçlarını hazır bulursun."
+    )
 
-    if st.button("🌐 Güncel Sonucu Getir", width="stretch", type="primary"):
+    settings = auto_tracker.load_settings()
+    is_enabled = settings.get("enabled", False)
+
+    cc1, cc2 = st.columns([2, 1])
+    with cc1:
+        new_state = st.toggle(
+            "🟢 Otomatik Takip" if is_enabled else "⚪ Otomatik Takip",
+            value=is_enabled,
+            help=("Açıkken: app her yüklendiğinde (en fazla saatte 1) son "
+                  "çekilişler kontrol edilir, kuponlar otomatik değerlendirilir. "
+                  "Kapalıyken: hiçbir otomatik işlem yapılmaz."),
+        )
+        if new_state != is_enabled:
+            auto_tracker.set_enabled(new_state)
+            st.cache_data.clear()
+            st.rerun()
+    with cc2:
+        if st.button("🔍 Şimdi Kontrol Et", width="stretch",
+                     disabled=not is_enabled):
+            with st.spinner("Yeni çekilişler kontrol ediliyor..."):
+                st.cache_data.clear()
+                result = auto_tracker.check_now()
+            if result.get("error"):
+                st.error(f"Kontrol başarısız: {result['error']}")
+            elif result["new_records"] == 0:
+                st.toast("Yeni çekiliş yok.")
+            else:
+                st.success(f"{result['new_records']} yeni çekiliş işlendi. "
+                           f"Toplam tahmini kazanç: {result['winnings']:,} TL")
+                st.rerun()
+
+    if is_enabled:
+        st.success(
+            f"✅ Otomatik takip **AÇIK**. Son kontrol edilen çekiliş: "
+            f"#{settings.get('last_checked_draw_no', '—')}"
+        )
+    else:
+        st.warning("⚠️ Otomatik takip **KAPALI**. Açtığında app her yüklendiğinde son sonuçları kontrol eder.")
+
+    st.divider()
+    st.markdown("### 📊 Otomatik Takip Geçmişi")
+
+    tracking = auto_tracker.load_tracking()
+    if not tracking:
+        st.info(
+            "Henüz otomatik takip sonucu yok. Otomatik takibi açtıktan sonra "
+            "kupon kaydet → çekiliş yapıldıktan sonra app'i tekrar aç → "
+            "sonuçların burada görünür."
+        )
+    else:
+        ckl1, ckl2, ckl3 = st.columns(3)
+        total_wins = sum(t.get("toplam_tahmini_kazanc_tl", 0) for t in tracking)
+        total_winning_tickets = sum(len(t.get("kazanan_kuponlar", [])) for t in tracking)
+        ckl1.metric("İşlenen Çekiliş", len(tracking))
+        ckl2.metric("Tutturan Kupon Sayısı", total_winning_tickets)
+        ckl3.metric("Toplam Tahmini Kazanç",
+                    f"{total_wins:,.0f} TL".replace(",", "."))
+
+        if st.button("✅ Hepsini Okundu İşaretle", width="stretch"):
+            auto_tracker.mark_all_seen()
+            st.rerun()
+
+        for record in reversed(tracking[-30:]):  # Son 30 çekiliş
+            n = record["cekilis_no"]
+            tarih = record["tarih"]
+            wins = record.get("kazanan_kuponlar", [])
+            tot = record.get("toplam_tahmini_kazanc_tl", 0)
+
+            header = f"🎲 Çekiliş #{n} — {tarih}"
+            if tot > 0:
+                header += f"  ·  💰 {tot:,.0f} TL".replace(",", ".")
+
+            with st.expander(header, expanded=(tot > 0)):
+                drawn = record["drawn"]
+                d_joker = record.get("joker")
+                d_ss = record.get("superstar")
+                st.caption("Çekilen Sayılar:")
+                render_ticket(drawn, joker=d_joker, superstar=d_ss,
+                              drawn_numbers=drawn,
+                              drawn_joker=d_joker, drawn_superstar=d_ss)
+
+                if not wins:
+                    st.write("Bu çekilişte kayıtlı kuponlardan hiçbiri 3+ tutturamadı, "
+                             "Joker veya Süper Star yakalayamadı.")
+                else:
+                    st.markdown("**Tutturan Kuponlar:**")
+                    for w in wins:
+                        prize = w.get("estimated_prize_tl", 0)
+                        parts = []
+                        if w["main_hits"] >= 3:
+                            parts.append(f"<span style='color:#111;background:#00E676;"
+                                         f"padding:2px 8px;border-radius:5px;font-size:13px;'>"
+                                         f"{w['main_hits']} ana 🏆</span>")
+                        if w.get("joker_hit"):
+                            parts.append("<span style='color:#FF9800;font-size:13px;'>+JOKER</span>")
+                        if w.get("superstar_hit"):
+                            parts.append("<span style='color:#BB86FC;font-size:13px;'>+SÜPER STAR</span>")
+                        if prize > 0:
+                            parts.append(f"<span style='color:#00E676;font-weight:600;"
+                                         f"font-size:14px;'>≈ {prize:,.0f} TL</span>".replace(",", "."))
+                        badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
+                                 f"gap:8px;flex-wrap:wrap;'>{''.join(parts)}</div>")
+                        render_ticket(w["main"],
+                                      joker=w.get("joker"),
+                                      superstar=w.get("superstar"),
+                                      drawn_numbers=drawn,
+                                      drawn_joker=d_joker, drawn_superstar=d_ss,
+                                      badge_html=badge)
+                        st.caption(f"📅 Kaydedildi: {w.get('record_tarih', '?')}")
+
+    st.divider()
+    st.markdown("### 🌐 Manuel Anlık Sonuç (Hızlı Bakış)")
+    if st.button("Güncel Sonucu Getir", width="stretch", type="primary"):
         try:
             with st.spinner("Son çekiliş kaynaktan çekiliyor..."):
                 latest = fetch_latest_draw()

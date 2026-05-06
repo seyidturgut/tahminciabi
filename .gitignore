@@ -6,3 +6,6 @@ daemon_state.json
 settings.json
 *.pkl
 .tahminci_cache/
+
+otomasyon_ayarlari.json
+otomatik_takip.json
