@@ -262,6 +262,35 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 
+JOKER_BONUS_TL = 50
+SS_BONUS_TL = 100
+
+
+def calc_prize_tl(match_count: int, joker_hit: bool, ss_hit: bool) -> int:
+    main = DEFAULT_PRIZES_TL.get(match_count, 0) if match_count >= 3 else 0
+    return int(main + (JOKER_BONUS_TL if joker_hit else 0) + (SS_BONUS_TL if ss_hit else 0))
+
+
+def fmt_tl(v: int) -> str:
+    if v >= 1_000_000:
+        return f"₺{v/1_000_000:.1f}M".replace(".0M", "M")
+    if v >= 1_000:
+        return f"₺{v/1_000:.1f}K".replace(".0K", "K")
+    return f"₺{v}"
+
+
+def prize_badge_html(match_count: int, joker_hit: bool, ss_hit: bool, drawn_known: bool) -> str:
+    if not drawn_known:
+        return ""
+    prize = calc_prize_tl(match_count, joker_hit, ss_hit)
+    if prize > 0:
+        color = "#00E676" if prize >= 800 else "#FFD54F"
+        return (f"<span style='margin-left:12px;color:{color};font-weight:700;font-size:15px;'>"
+                f"Kazanç: {fmt_tl(prize)}</span>")
+    return ("<span style='margin-left:12px;color:#666;font-size:13px;'>"
+            "Kazanç: ₺0</span>")
+
+
 def render_ticket(numbers, joker=None, superstar=None,
                   drawn_numbers=None, drawn_joker=None, drawn_superstar=None,
                   badge_html=""):
@@ -485,9 +514,10 @@ with tab2:
                         parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
                     if ss_hit:
                         parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
+                    parts_b.append(prize_badge_html(match_count, joker_hit, ss_hit, True))
                     if parts_b:
                         badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
-                                 f"gap:8px;'>{''.join(parts_b)}</div>")
+                                 f"gap:8px;align-items:center;'>{''.join(parts_b)}</div>")
                 render_ticket(main, joker=t_joker, superstar=t_ss,
                               drawn_numbers=drawn_numbers,
                               drawn_joker=drawn_joker, drawn_superstar=drawn_ss,
@@ -762,10 +792,11 @@ with tab4:
                             parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
                         if ss_hit:
                             parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
+                        parts_b.append(prize_badge_html(m, joker_hit, ss_hit, True))
                         badge = ""
                         if parts_b:
                             badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
-                                     f"gap:8px;'>{''.join(parts_b)}</div>")
+                                     f"gap:8px;align-items:center;'>{''.join(parts_b)}</div>")
                         render_ticket(main, joker=t_joker, superstar=t_ss,
                                       drawn_numbers=drawn,
                                       drawn_joker=d_joker, drawn_superstar=d_ss,
