@@ -1,13 +1,14 @@
 """
-Sayısal Loto (6/90) gerçek çekiliş verisi kazıyıcı.
+Çekiliş verisi kazıyıcı — Sayısal Loto, Şans Topu, On Numara için.
 
-Birincil kaynak: lototurkiye.com (statik HTML, b{N}.gif top imajları).
+Kaynak: lototurkiye.com (statik HTML, b{N}.gif top imajları).
 Milli Piyango Online (MPO) Cloudflare WAF nedeniyle programatik erişime kapalıdır.
 
-Tek public API:
-    fetch_full_history(start=1, end=None) -> pd.DataFrame
-    fetch_latest_draw() -> dict
-    fetch_latest_draw_number() -> int
+Public API (game parametresi opsiyonel — default Sayısal Loto):
+    fetch_full_history(start=1, end=None, game=None) -> pd.DataFrame
+    fetch_latest_draw(game=None) -> dict
+    fetch_latest_draw_number(game=None) -> int
+    fetch_draw(no, game=None) -> dict
 
 Hata durumunda ScrapeFailedError yükselir — fallback yoktur.
 """
@@ -20,11 +21,13 @@ from typing import Optional
 
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
+
+from games import get_game
 
 BASE = "https://www.lototurkiye.com"
-DRAW_URL = BASE + "/SAYISAL-LOTO-SISAL/CEKILIS-SONUCLARI/9/{no}/01/01/2020/X"
-HOME_URL = BASE + "/SAYISAL-LOTO-SISAL/ANA-SAYFA/9"
+# {slug}/CEKILIS-SONUCLARI/{id}/{no}/01/01/2020/X
+DRAW_URL_TPL = BASE + "/{slug}/CEKILIS-SONUCLARI/{id}/{no}/01/01/2020/X"
+HOME_URL_TPL = BASE + "/{slug}/ANA-SAYFA/{id}"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -72,28 +75,27 @@ def _request_with_retry(session: requests.Session, url: str, retries: int = 3) -
     raise ScrapeFailedError(f"GET {url} başarısız: {last_err}")
 
 
-def _parse_draw_html(html: str, draw_no: int) -> Optional[dict]:
-    """HTML'den (tarih, 6 ana sayı, joker, süper star) çıkarır."""
-    parts = html.split("/bplus.gif")
-    if len(parts) < 2:
-        return None
+def _draw_url(game: dict, no: int) -> str:
+    return DRAW_URL_TPL.format(slug=game["scrape_slug"], id=game["scrape_id"], no=no)
 
-    before_plus = parts[0]
-    after_plus = parts[1]
 
-    main_balls = re.findall(r"/b(\d+)\.gif", before_plus)
-    if len(main_balls) < 6:
-        return None
-    main6 = sorted({int(x) for x in main_balls[:6]})
-    if len(main6) != 6 or not all(1 <= n <= 90 for n in main6):
-        return None
+def _home_url(game: dict) -> str:
+    return HOME_URL_TPL.format(slug=game["scrape_slug"], id=game["scrape_id"])
 
-    # bplus sonrasında ilk iki top: joker + süper star (resmi Milli Piyango formatı)
-    next_section = after_plus.split("/bplus.gif")[0]
-    bonus_balls = re.findall(r"/b(\d+)\.gif", next_section)
-    joker = int(bonus_balls[0]) if len(bonus_balls) >= 1 else None
-    superstar = int(bonus_balls[1]) if len(bonus_balls) >= 2 else None
 
+def _parse_draw_html(html: str, draw_no: int, game: dict) -> Optional[dict]:
+    """HTML'den oyuna göre (tarih, ana sayılar, bonuslar) çıkarır.
+
+    Sayısal Loto / Şans Topu: ana toplar bplus.gif separator'undan ÖNCE,
+    bonuslar SONRA. (Sayısal Loto: 6 ana + joker + ss; Şans Topu: 5 ana + ŞT.)
+
+    On Numara: bplus yok, 22 ana top.
+    """
+    expected_main = game["picks"] if game["picks"] == game["drawn"] else game["drawn"]
+    bonus_specs = game["bonuses"]
+    total = game["total"]
+
+    # Tarih önce — kayıp ise direkt None
     dm = DATE_RE.search(html)
     if not dm:
         return None
@@ -102,38 +104,83 @@ def _parse_draw_html(html: str, draw_no: int) -> Optional[dict]:
     year = int(dm.group(3))
     if not (2000 <= year <= 2100):
         return None
+    tarih = pd.Timestamp(year=year, month=month, day=day)
+
+    if bonus_specs:
+        # bplus.gif separator'ı kullan
+        parts = html.split("/bplus.gif")
+        if len(parts) < 2:
+            return None
+        before = parts[0]
+        after = parts[1]
+
+        main_balls = re.findall(r"/b(\d+)\.gif", before)
+        if len(main_balls) < expected_main:
+            return None
+        main_nums = sorted({int(x) for x in main_balls[-expected_main:]})
+        if len(main_nums) != expected_main or not all(1 <= n <= total for n in main_nums):
+            return None
+
+        # bplus sonrası: bonus topları sırasıyla
+        next_section = after.split("/bplus.gif")[0]
+        bonus_balls = re.findall(r"/b(\d+)\.gif", next_section)
+        bonus_values: dict[str, Optional[int]] = {}
+        for i, spec in enumerate(bonus_specs):
+            if i < len(bonus_balls):
+                v = int(bonus_balls[i])
+                if 1 <= v <= spec["total"]:
+                    bonus_values[spec["key"]] = v
+                else:
+                    bonus_values[spec["key"]] = None
+            else:
+                bonus_values[spec["key"]] = None
+    else:
+        # On Numara: bplus yok, 22 ana
+        all_balls = re.findall(r"/b(\d+)\.gif", html)
+        # ana sayfa bilgilerinde top resmleri kullanılmıyorsa son N tanesi
+        valid = [int(x) for x in all_balls if 1 <= int(x) <= total]
+        if len(valid) < expected_main:
+            return None
+        main_nums = sorted(set(valid[-expected_main:]))
+        if len(main_nums) != expected_main:
+            return None
+        bonus_values = {}
+
     return {
         "cekilis_no": draw_no,
-        "tarih": pd.Timestamp(year=year, month=month, day=day),
-        "sayilar": main6,
-        "joker": joker,
-        "superstar": superstar,
+        "tarih": tarih,
+        "sayilar": main_nums,
+        **bonus_values,
     }
 
 
-def fetch_latest_draw_number() -> int:
+def fetch_latest_draw_number(game: Optional[dict] = None) -> int:
     """Ana sayfadan en son çekiliş numarasını alır."""
+    g = game or get_game()
     s = _make_session()
-    html = _request_with_retry(s, HOME_URL)
+    html = _request_with_retry(s, _home_url(g))
     m = DRAW_NO_RE.search(html)
     if not m:
-        raise ScrapeFailedError("Ana sayfada çekiliş numarası bulunamadı.")
+        raise ScrapeFailedError(f"{g['name']}: ana sayfada çekiliş numarası bulunamadı.")
     return int(m.group(1))
 
 
-def fetch_draw(no: int, session: Optional[requests.Session] = None) -> dict:
+def fetch_draw(no: int, session: Optional[requests.Session] = None,
+               game: Optional[dict] = None) -> dict:
     """Tek bir çekilişi indirir."""
+    g = game or get_game()
     s = session or _make_session()
-    html = _request_with_retry(s, DRAW_URL.format(no=no))
-    parsed = _parse_draw_html(html, no)
+    html = _request_with_retry(s, _draw_url(g, no))
+    parsed = _parse_draw_html(html, no, g)
     if parsed is None:
-        raise ScrapeFailedError(f"Çekiliş #{no} parse edilemedi.")
+        raise ScrapeFailedError(f"{g['name']} #{no} parse edilemedi.")
     return parsed
 
 
-def fetch_latest_draw() -> dict:
-    no = fetch_latest_draw_number()
-    return fetch_draw(no)
+def fetch_latest_draw(game: Optional[dict] = None) -> dict:
+    g = game or get_game()
+    no = fetch_latest_draw_number(g)
+    return fetch_draw(no, game=g)
 
 
 def fetch_full_history(
@@ -141,14 +188,19 @@ def fetch_full_history(
     end: Optional[int] = None,
     workers: int = 10,
     progress_callback=None,
+    game: Optional[dict] = None,
 ) -> pd.DataFrame:
     """
-    Belirtilen aralıktaki tüm çekilişleri concurrent olarak indirir.
+    Belirtilen aralıktaki tüm çekilişleri concurrent indirir.
 
-    DataFrame kolonları: cekilis_no, tarih, sayi_1..sayi_6
+    DataFrame kolonları oyun konfigine göre:
+        Sayısal Loto: cekilis_no, tarih, sayi_1..sayi_6, joker, superstar
+        Şans Topu:    cekilis_no, tarih, sayi_1..sayi_5, sans_topu
+        On Numara:    cekilis_no, tarih, cekilen_1..cekilen_22
     """
+    g = game or get_game()
     if end is None:
-        end = fetch_latest_draw_number()
+        end = fetch_latest_draw_number(g)
     if end < start:
         raise ScrapeFailedError(f"Geçersiz aralık: start={start} end={end}")
 
@@ -160,9 +212,9 @@ def fetch_full_history(
 
     def task(n: int):
         try:
-            return fetch_draw(n, session=session)
+            return fetch_draw(n, session=session, game=g)
         except ScrapeFailedError:
-            return n  # int = failed marker
+            return n
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {ex.submit(task, n): n for n in range(start, end + 1)}
@@ -181,25 +233,40 @@ def fetch_full_history(
 
     if len(rows) < total * 0.95:
         raise ScrapeFailedError(
-            f"Çok fazla başarısız çekiliş: {len(failed)}/{total}. "
+            f"{g['name']}: çok fazla başarısız çekiliş: {len(failed)}/{total}. "
             f"İlk hatalar: {failed[:5]}"
         )
 
     rows.sort(key=lambda r: r["cekilis_no"])
-    df = pd.DataFrame([
-        {
-            "cekilis_no": r["cekilis_no"],
-            "tarih": r["tarih"],
-            **{f"sayi_{i+1}": r["sayilar"][i] for i in range(6)},
-            "joker": r.get("joker"),
-            "superstar": r.get("superstar"),
-        }
-        for r in rows
-    ])
+
+    # Kolon prefix'i: picks==drawn ise sayi_, değilse cekilen_
+    if g["picks"] == g["drawn"]:
+        num_prefix = "sayi"
+        num_count = g["picks"]
+    else:
+        num_prefix = "cekilen"
+        num_count = g["drawn"]
+
+    bonus_keys = [b["key"] for b in g["bonuses"]]
+
+    records = []
+    for r in rows:
+        rec = {"cekilis_no": r["cekilis_no"], "tarih": r["tarih"]}
+        for i in range(num_count):
+            rec[f"{num_prefix}_{i+1}"] = r["sayilar"][i] if i < len(r["sayilar"]) else None
+        for k in bonus_keys:
+            rec[k] = r.get(k)
+        records.append(rec)
+    df = pd.DataFrame(records)
     return df
 
 
 if __name__ == "__main__":
-    print("Son çekiliş numarası:", fetch_latest_draw_number())
-    latest = fetch_latest_draw()
-    print(f"Son çekiliş: {latest}")
+    for key in ["sayisal_loto", "sans_topu", "on_numara"]:
+        g = get_game(key)
+        try:
+            no = fetch_latest_draw_number(g)
+            d = fetch_latest_draw(g)
+            print(f"{g['emoji']} {g['name']} #{no}: {d}")
+        except ScrapeFailedError as e:
+            print(f"{g['emoji']} {g['name']}: {e}")

@@ -15,22 +15,27 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-NUMBER_COLS = [f"sayi_{i+1}" for i in range(6)]
-TOTAL = 90
+from ._common import detect_params
+
+
+def _counts(df: pd.DataFrame) -> tuple[np.ndarray, int, list[str]]:
+    cols, total = detect_params(df)
+    counts = np.zeros(total)
+    for col in cols:
+        for v in df[col].values:
+            counts[int(v) - 1] += 1
+    return counts, total, cols
 
 
 def chi_square(df: pd.DataFrame) -> dict:
     """Tüm geçmişin uniform'a uygunluğu."""
-    counts = np.zeros(TOTAL)
-    for col in NUMBER_COLS:
-        for v in df[col].values:
-            counts[int(v) - 1] += 1
-    expected = counts.sum() / TOTAL
+    counts, total, _ = _counts(df)
+    expected = counts.sum() / total
     chi2 = ((counts - expected) ** 2 / expected).sum()
-    p = 1 - stats.chi2.cdf(chi2, df=TOTAL - 1)
+    p = 1 - stats.chi2.cdf(chi2, df=total - 1)
     return {
         "chi2": float(chi2),
-        "df": TOTAL - 1,
+        "df": total - 1,
         "p_value": float(p),
         "rejects_uniform_at_05": bool(p < 0.05),
     }
@@ -38,27 +43,20 @@ def chi_square(df: pd.DataFrame) -> dict:
 
 def ks_test(df: pd.DataFrame) -> dict:
     """Frekans dağılımının uniform CDF'e KS uzaklığı."""
-    counts = np.zeros(TOTAL)
-    for col in NUMBER_COLS:
-        for v in df[col].values:
-            counts[int(v) - 1] += 1
+    counts, total, _ = _counts(df)
     obs_cdf = np.cumsum(counts) / counts.sum()
-    expected_cdf = np.arange(1, TOTAL + 1) / TOTAL
+    expected_cdf = np.arange(1, total + 1) / total
     d = float(np.max(np.abs(obs_cdf - expected_cdf)))
     n = int(counts.sum())
-    # KS p-value approximation
     p = 2 * np.exp(-2 * (d ** 2) * n)
     return {"D": d, "p_value": float(min(1.0, max(0.0, p)))}
 
 
 def number_z_scores(df: pd.DataFrame) -> np.ndarray:
     """Her sayının uniform beklentiden z-skoru."""
-    counts = np.zeros(TOTAL)
-    for col in NUMBER_COLS:
-        for v in df[col].values:
-            counts[int(v) - 1] += 1
+    counts, total, _ = _counts(df)
     n_obs = counts.sum()
-    p_uniform = 1.0 / TOTAL
+    p_uniform = 1.0 / total
     expected = n_obs * p_uniform
     var = n_obs * p_uniform * (1 - p_uniform)
     sd = np.sqrt(var) if var > 0 else 1.0
@@ -66,30 +64,21 @@ def number_z_scores(df: pd.DataFrame) -> np.ndarray:
 
 
 def deviation_scores(df: pd.DataFrame) -> np.ndarray:
-    """
-    Sapan sayıları sömürmek için olasılık vektörü.
-
-    Pozitif z-score (beklenenden çok çıkmış) gelecekte de momentum sürdürebilir
-    (sıcak), negatif z-score (eksik çıkmış) regression-to-mean ile sıçrayabilir
-    (soğuk patlama). İkisi de "uniform'dan farklı" sinyal taşır.
-
-    Vektör: |z| arttıkça sapma 0.5 + (|z| / max|z|) * 0.5 ile ağırlıklı, sonra
-    normalleştirilir. Hep pozitif ve toplam 1.
-    """
+    """Sapan sayıları sömürmek için olasılık vektörü (total elemanlı)."""
+    _, total, _ = _counts(df)
     z = number_z_scores(df)
     abs_z = np.abs(z)
     if abs_z.max() == 0:
-        return np.full(TOTAL, 1.0 / TOTAL)
-    # Agresif sapma sömürüsü: |z| üstel olarak boost edilir, böylece
-    # 2σ üstündeki sayılar 1σ'lardan belirgin biçimde daha çok ağırlık alır.
+        return np.full(total, 1.0 / total)
     weights = 1.0 + abs_z ** 1.8
     return weights / weights.sum()
 
 
 def runs_test_odd_even(df: pd.DataFrame) -> dict:
     """Çekiliş başına tek/çift sayı sayılarının runs testi."""
+    cols, _ = detect_params(df)
     odds_per_draw = []
-    for _, row in df[NUMBER_COLS].iterrows():
+    for _, row in df[cols].iterrows():
         odds_per_draw.append(sum(int(v) % 2 for v in row.values))
     odds_per_draw = np.array(odds_per_draw)
     median = np.median(odds_per_draw)

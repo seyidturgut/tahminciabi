@@ -23,11 +23,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-NUMBER_COLS = [f"sayi_{i+1}" for i in range(6)]
-TOTAL = 90
+from ._common import detect_params
+
 CACHE_DIR = Path.home() / ".tahminci_cache"
-CACHE_FILE = CACHE_DIR / "lgbm_v1.pkl"
 CACHE_TTL_SEC = 7 * 24 * 3600
+
+
+def _cache_file_for(total: int) -> Path:
+    """Oyuna özel cache dosyası — total değerine göre."""
+    return CACHE_DIR / f"lgbm_total{total}_v2.pkl"
 
 try:
     import lightgbm as lgb
@@ -38,16 +42,12 @@ except Exception:
 
 
 def _build_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Her (çekiliş_t, sayı_n) çiftini bir gözleme dönüştürür.
-
-    Sample t için feature'lar t öncesinden hesaplanır, hedef t-zamanındaki
-    sayının çekilişte var olup olmaması.
-    """
+    """Her (çekiliş_t, sayı_n) çiftini bir gözleme dönüştürür."""
+    cols, total = detect_params(df)
     df = df.sort_values("tarih").reset_index(drop=True)
     n_draws = len(df)
-    draws = df[NUMBER_COLS].values  # (n_draws, 6)
-    presence = np.zeros((n_draws, TOTAL), dtype=np.int8)
+    draws = df[cols].values
+    presence = np.zeros((n_draws, total), dtype=np.int8)
     for t in range(n_draws):
         for v in draws[t]:
             presence[t, int(v) - 1] = 1
@@ -60,10 +60,9 @@ def _build_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
     features = []
     targets = []
-    # İlk 50 çekilişi atla (warm-up history yetersiz)
     warmup = 50
     for t in range(warmup, n_draws):
-        for num_idx in range(TOTAL):
+        for num_idx in range(total):
             # Gap
             past = presence[:t, num_idx]
             last_seen = np.where(past == 1)[0]
@@ -98,29 +97,32 @@ def _build_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     return X, y
 
 
-def _load_cache():
-    if not CACHE_FILE.exists():
+def _load_cache(total: int):
+    cache_file = _cache_file_for(total)
+    if not cache_file.exists():
         return None
-    age = time.time() - CACHE_FILE.stat().st_mtime
+    age = time.time() - cache_file.stat().st_mtime
     if age > CACHE_TTL_SEC:
         return None
     try:
-        with open(CACHE_FILE, "rb") as f:
+        with open(cache_file, "rb") as f:
             return pickle.load(f)
     except Exception:
         return None
 
 
-def _save_cache(obj):
+def _save_cache(obj, total: int):
     CACHE_DIR.mkdir(exist_ok=True)
-    with open(CACHE_FILE, "wb") as f:
+    cache_file = _cache_file_for(total)
+    with open(cache_file, "wb") as f:
         pickle.dump(obj, f)
 
 
 def train_model(df: pd.DataFrame, force: bool = False, verbose: bool = False):
     """Modeli eğitir veya cache'ten yükler."""
+    _, total = detect_params(df)
     if not force:
-        cached = _load_cache()
+        cached = _load_cache(total)
         if cached is not None:
             return cached
 
@@ -149,35 +151,35 @@ def train_model(df: pd.DataFrame, force: bool = False, verbose: bool = False):
         except Exception:
             pass
 
-    bundle = {"model": model, "trained_at": time.time(), "n_samples": len(y)}
-    _save_cache(bundle)
+    bundle = {"model": model, "trained_at": time.time(), "n_samples": len(y),
+              "total": total}
+    _save_cache(bundle, total)
     return bundle
 
 
 def predict_next_draw_probabilities(df: pd.DataFrame, force_train: bool = False) -> np.ndarray:
-    """Her sayı için bir sonraki çekilişte çıkma olasılığı (90,)."""
+    """Her sayı için bir sonraki çekilişte çıkma olasılığı (total elemanlı)."""
+    cols, total = detect_params(df)
     df = df.sort_values("tarih").reset_index(drop=True)
     bundle = train_model(df, force=force_train)
     model = bundle["model"]
 
-    # En güncel feature satırlarını üret (t = len(df), tahmin edilecek çekiliş)
     n_draws = len(df)
-    presence = np.zeros((n_draws, TOTAL), dtype=np.int8)
-    draws = df[NUMBER_COLS].values
+    presence = np.zeros((n_draws, total), dtype=np.int8)
+    draws = df[cols].values
     for t in range(n_draws):
         for v in draws[t]:
             presence[t, int(v) - 1] = 1
 
-    # Yarına ait feature'ları, son çekiliş tarihine göre türet
     last_date = pd.to_datetime(df["tarih"]).iloc[-1]
-    next_date = last_date + pd.Timedelta(days=2)  # ortalama haftada 3 çekiliş
+    next_date = last_date + pd.Timedelta(days=2)
     dow = next_date.dayofweek
     week = (next_date.day - 1) // 7
     dow_sin, dow_cos = np.sin(2 * np.pi * dow / 7), np.cos(2 * np.pi * dow / 7)
     week_sin, week_cos = np.sin(2 * np.pi * week / 5), np.cos(2 * np.pi * week / 5)
 
     features = []
-    for num_idx in range(TOTAL):
+    for num_idx in range(total):
         past = presence[:, num_idx]
         last_seen = np.where(past == 1)[0]
         gap = (n_draws - last_seen[-1]) if len(last_seen) > 0 else n_draws
@@ -198,7 +200,7 @@ def predict_next_draw_probabilities(df: pd.DataFrame, force_train: bool = False)
     X_next = np.asarray(features, dtype=float)
     probs = model.predict_proba(X_next)[:, 1]
     if probs.sum() <= 0:
-        return np.full(TOTAL, 1.0 / TOTAL)
+        return np.full(total, 1.0 / total)
     return probs / probs.sum()
 
 

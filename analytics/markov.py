@@ -9,40 +9,32 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-NUMBER_COLS = [f"sayi_{i+1}" for i in range(6)]
-TOTAL = 90
+from ._common import detect_params
 
 
 def build_transition_matrix(df: pd.DataFrame, smoothing: float = 1.0) -> np.ndarray:
-    """
-    Laplace smoothing ile geçiş matrisi.
-
-    Returns:
-        T (90,90) — T[i,j] = P(sayı j sonraki çekilişte | i bu çekilişte)
-    """
-    counts = np.full((TOTAL, TOTAL), smoothing, dtype=float)
-    draws = df[NUMBER_COLS].values  # (n_draws, 6)
+    """Laplace smoothing ile geçiş matrisi."""
+    cols, total = detect_params(df)
+    counts = np.full((total, total), smoothing, dtype=float)
+    draws = df[cols].values
     for prev, curr in zip(draws[:-1], draws[1:]):
         for i in prev:
             for j in curr:
-                counts[i - 1, j - 1] += 1.0
+                counts[int(i) - 1, int(j) - 1] += 1.0
     row_sums = counts.sum(axis=1, keepdims=True)
     return counts / row_sums
 
 
 def next_draw_probabilities(df: pd.DataFrame, smoothing: float = 1.0) -> np.ndarray:
-    """
-    Bir sonraki çekilişte her sayının çıkma Markov olasılığı (90 elemanlı vektör).
-
-    Son çekilişin 6 sayısının her biri için T[i,:] sırasını topla, normalleştir.
-    """
+    """Bir sonraki çekilişte her sayının çıkma Markov olasılığı (total elemanlı)."""
+    cols, total = detect_params(df)
     if len(df) < 2:
-        return np.full(TOTAL, 1.0 / TOTAL)
+        return np.full(total, 1.0 / total)
     T = build_transition_matrix(df, smoothing=smoothing)
-    last = df.iloc[-1][NUMBER_COLS].values
-    scores = np.zeros(TOTAL)
+    last = df.iloc[-1][cols].values
+    scores = np.zeros(total)
     for i in last:
-        scores += T[i - 1]
+        scores += T[int(i) - 1]
     scores /= scores.sum()
     return scores
 

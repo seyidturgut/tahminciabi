@@ -9,9 +9,10 @@ from math_engine import MathEngine
 from predictor import Predictor
 from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
+from games import GAMES, get_game
 import auto_tracker
 
-APP_VERSION = "v2.7.0"
+APP_VERSION = "v2.7.3"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -114,22 +115,38 @@ if not st.session_state.logged_in:
 # --- DATA ---
 # NOT: Streamlit'te '_' önekli parametreler cache key'e DAHİL EDİLMEZ.
 # Bu yüzden cache busting için underscore-suz isim kullanmak ZORUNLU.
-@st.cache_data(show_spinner=False)
-def get_data():
-    return load_data()
+
+# --- GAME SELECTOR ---
+if "selected_game" not in st.session_state:
+    st.session_state.selected_game = "sayisal_loto"
+
+game_key = st.session_state.selected_game
+GAME = get_game(game_key)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_data_for_game(game_key: str, version: str):
+    return load_data(get_game(game_key))
+
 
 @st.cache_resource(show_spinner=False)
-def get_engine_and_predictor(version: str):
-    df = get_data()
-    return MathEngine(df), Predictor(df)
+def get_engine_and_predictor(version: str, game_key: str):
+    g = get_game(game_key)
+    df = get_data_for_game(game_key, version)
+    from games import number_columns
+    cols = number_columns(g)
+    return (
+        MathEngine(df, total_numbers=g["total"], draw_size=len(cols), number_cols=cols),
+        Predictor(df, game=g),
+    )
 
 
 try:
-    with st.spinner("Gerçek çekiliş veritabanı yükleniyor / güncelleniyor..."):
-        df = get_data()
+    with st.spinner(f"{GAME['name']} veritabanı yükleniyor / güncelleniyor..."):
+        df = get_data_for_game(game_key, APP_VERSION)
 except ScrapeFailedError as e:
     st.error(
-        "❌ Sayısal Loto verisi çekilemedi. İnternet bağlantınızı veya kaynak siteyi kontrol edin.\n\n"
+        f"❌ {GAME['name']} verisi çekilemedi. İnternet bağlantınızı veya kaynak siteyi kontrol edin.\n\n"
         f"Hata: {e}"
     )
     st.stop()
@@ -137,7 +154,7 @@ except Exception as e:
     st.error(f"❌ Veri yükleme hatası: {e}")
     st.stop()
 
-engine, predictor = get_engine_and_predictor(APP_VERSION)
+engine, predictor = get_engine_and_predictor(APP_VERSION, game_key)
 
 
 # --- AUTO TRACKER: Her oturumda 1 kez sessizce kontrol et ---
@@ -157,7 +174,7 @@ if _auto_tracker_settings.get("enabled"):
 # --- HEADER ---
 title_col, ver_col = st.columns([5, 1])
 with title_col:
-    st.title("🔮 Tahminci: Sayısal Loto AI Asistanı")
+    st.title(f"{GAME['emoji']} Tahminci: {GAME['name']} AI Asistanı")
     st.markdown("Markov + Bayesian + Rasgelelik Testleri + LightGBM ile çoklu-model olasılık analizi.")
 with ver_col:
     st.markdown(
@@ -167,6 +184,23 @@ with ver_col:
         f"</div>",
         unsafe_allow_html=True,
     )
+
+# Oyun seçici
+new_game = st.radio(
+    "Oyun seç",
+    list(GAMES.keys()),
+    format_func=lambda k: f"{GAMES[k]['emoji']} {GAMES[k]['name']}",
+    horizontal=True,
+    label_visibility="collapsed",
+    index=list(GAMES.keys()).index(game_key),
+)
+if new_game != game_key:
+    st.session_state.selected_game = new_game
+    st.session_state.current_tickets = None
+    st.session_state.current_pool = None
+    st.cache_resource.clear()
+    st.rerun()
+
 st.divider()
 
 # --- SIDEBAR ---
@@ -179,38 +213,53 @@ with st.sidebar:
 
     st.divider()
     st.header("⚙️ Motor Ayarları")
+    _ALL_STRATEGIES = [
+        ("multi_mini", "🎲 Çoklu Mini-Sistem (Önerilen)"),
+        ("system", "🎯 Sistemli Oyun (Garanti)"),
+        ("professor", "🎓 Profesör Modu"),
+        ("super_hybrid", "Süper Hibrit"),
+        ("hot", "Sıcak Sayılar"),
+        ("cold", "Soğuk Sayılar"),
+    ]
+    available = [(k, label) for k, label in _ALL_STRATEGIES if k in GAME["strategies"]]
     strategy = st.radio(
         "Strateji",
-        ["🎲 Çoklu Mini-Sistem (Önerilen)", "🎯 Sistemli Oyun (Garanti)", "🎓 Profesör Modu",
-         "Süper Hibrit", "Sıcak Sayılar", "Soğuk Sayılar"],
+        [label for _, label in available],
         help=(
-            "🎲 Çoklu Mini-Sistem: N adet bağımsız küçük havuz — riski dağıtır, "
-            "tek büyük sistemden 3-5x daha sık 'en az 1 tutar' verir.\n\n"
-            "🎯 Sistemli Oyun: tek havuzlu klasik sistem — havuzda 3+ çıkarsa "
-            "garantili tutar.\n\n"
+            "🎲 Çoklu Mini-Sistem: N adet bağımsız küçük havuz — riski dağıtır.\n"
+            "🎯 Sistemli Oyun: tek havuzlu klasik sistem — garanti.\n"
             "🎓 Profesör Modu: Markov + Bayesian + LightGBM ile bağımsız kuponlar."
         ),
     )
     strategy_clean = strategy.replace("🎓 ", "").replace("🎯 ", "").replace("🎲 ", "")
 
+    PICKS = GAME["picks"]
+    DRAWN = GAME["drawn"]
+    TOTAL = GAME["total"]
+    COST = GAME["ticket_cost_tl"]
+    NON_PICK = TOTAL - DRAWN  # 90-6=84, 34-5=29
+
     if strategy == "🎲 Çoklu Mini-Sistem (Önerilen)":
         from math import comb
         num_systems = st.slider("Mini-Sistem Sayısı", 2, 10, 5,
                                  help="Bağımsız küçük havuz sayısı")
-        pool_size_each = st.select_slider("Her Havuz Boyutu",
-                                           options=[6, 7, 8], value=7)
-        kolon_each = comb(pool_size_each, 6)
+        pool_size_each = st.select_slider(
+            "Her Havuz Boyutu",
+            options=[PICKS, PICKS+1, PICKS+2],
+            value=PICKS+1,
+        )
+        kolon_each = comb(pool_size_each, PICKS)
         toplam_kolon = num_systems * kolon_each
-        toplam_cost = toplam_kolon * 25
+        toplam_cost = toplam_kolon * COST
 
-        c_t = comb(90, pool_size_each)
-        p_lt3 = sum(comb(6, k) * comb(84, pool_size_each - k) / c_t for k in range(3))
+        c_t = comb(TOTAL, pool_size_each)
+        p_lt3 = sum(comb(DRAWN, k) * comb(NON_PICK, pool_size_each - k) / c_t for k in range(3))
         p_per = 1 - p_lt3
         p_at_least_one = (1 - p_lt3 ** num_systems) * 100
 
         st.caption(
             f"**{num_systems} × Sistem {pool_size_each}**: "
-            f"{toplam_kolon} kolon × 25 TL = **{toplam_cost:,} TL**. "
+            f"{toplam_kolon} kolon × {COST} TL = **{toplam_cost:,} TL**. "
             f"En az 1 havuzda 3+ tutturma şansı: **%{p_at_least_one:.1f}** "
             f"(tek Sistem {pool_size_each} → %{p_per*100:.1f})"
             .replace(",", ".")
@@ -223,38 +272,41 @@ with st.sidebar:
         pool_size = None
         randomize_pool = True
     elif strategy == "🎯 Sistemli Oyun (Garanti)":
+        # Oyuna göre uygun pool size seçenekleri
+        sys_options = [PICKS, PICKS+1, PICKS+2, PICKS+3, PICKS+4, PICKS+5,
+                       PICKS+6, PICKS+9, PICKS+14]
+        sys_options = sorted(set(s for s in sys_options if s <= TOTAL))
         pool_size = st.select_slider(
             "Sistem Boyutu (havuzdaki sayı)",
-            options=[6, 7, 8, 9, 10, 12, 15, 20],
-            value=8,
+            options=sys_options,
+            value=sys_options[2] if len(sys_options) > 2 else sys_options[0],
         )
         randomize_pool = st.toggle(
             "🎲 Her üretimde farklı havuz",
             value=True,
-            help=("Açık: top 15-20 olasılıklı sayıdan ağırlıklı rastgele seçim — "
-                  "her tıklamada farklı pool. Kapalı: her zaman aynı top-N (deterministik)."),
+            help=("Açık: top olasılıklı sayıdan ağırlıklı rastgele seçim. "
+                  "Kapalı: her zaman aynı top-N (deterministik)."),
         )
         from math import comb
-        sys_kolon = comb(pool_size, 6)
-        sys_cost = sys_kolon * 25
-        c_total = comb(90, pool_size)
-        p_lt3 = sum(comb(6, k) * comb(84, pool_size - k) / c_total for k in range(3))
+        sys_kolon = comb(pool_size, PICKS)
+        sys_cost = sys_kolon * COST
+        c_total = comb(TOTAL, pool_size)
+        p_lt3 = sum(comb(DRAWN, k) * comb(NON_PICK, pool_size - k) / c_total for k in range(3))
         p_3plus = (1 - p_lt3) * 100
         st.caption(
-            f"**Sistem {pool_size}**: {sys_kolon} kolon × 25 TL = "
+            f"**Sistem {pool_size}**: {sys_kolon} kolon × {COST} TL = "
             f"**{sys_cost:,} TL**. **Garanti: havuzda 3+ çıkarsa en az 1 kupon tutar.** "
             f"Bunun olma ihtimali **%{p_3plus:.1f}**."
             .replace(",", ".")
         )
-        # Show probability scale
         with st.expander("📊 Sistem Boyutları ve Olasılıklar", expanded=False):
             prob_data = []
-            for size in [6, 7, 8, 9, 10, 12, 15, 20]:
-                c_t = comb(90, size)
-                p_lt = sum(comb(6, k) * comb(84, size - k) / c_t for k in range(3))
+            for size in sys_options:
+                c_t = comb(TOTAL, size)
+                p_lt = sum(comb(DRAWN, k) * comb(NON_PICK, size - k) / c_t for k in range(3))
                 p_plus = (1 - p_lt) * 100
-                kol = comb(size, 6)
-                cost = kol * 25
+                kol = comb(size, PICKS)
+                cost = kol * COST
                 prob_data.append({
                     "Sistem": f"S{size}",
                     "Kolon": f"{kol:,}",
@@ -321,25 +373,37 @@ def prize_badge_html(match_count: int, joker_hit: bool, ss_hit: bool, drawn_know
             "Kazanç: ₺0</span>")
 
 
-def render_ticket(numbers, joker=None, superstar=None,
+_BONUS_STYLE = {
+    "joker": ("JOKER", "ball-joker"),
+    "superstar": ("SÜPER STAR", "ball-superstar"),
+    "sans_topu": ("ŞANS TOPU", "ball-joker"),
+}
+
+
+def render_ticket(numbers, joker=None, superstar=None, sans_topu=None,
                   drawn_numbers=None, drawn_joker=None, drawn_superstar=None,
-                  badge_html=""):
+                  drawn_sans_topu=None, badge_html=""):
     parts = []
     for n in numbers:
         cls = "ball-match" if drawn_numbers and n in drawn_numbers else "ball"
         parts.append(f"<div class='{cls}'>{n:02d}</div>")
 
-    if joker is not None:
-        parts.append("<div class='ticket-divider'></div>")
-        parts.append("<span class='bonus-label'>JOKER</span>")
-        joker_cls = "ball-match" if drawn_joker is not None and joker == drawn_joker else "ball-joker"
-        parts.append(f"<div class='{joker_cls}'>{joker:02d}</div>")
-
-    if superstar is not None:
-        parts.append("<span class='bonus-label'>SÜPER STAR</span>")
-        ss_cls = ("ball-match" if drawn_superstar is not None and superstar == drawn_superstar
-                  else "ball-superstar")
-        parts.append(f"<div class='{ss_cls}'>{superstar:02d}</div>")
+    bonus_data = [
+        ("joker", joker, drawn_joker),
+        ("superstar", superstar, drawn_superstar),
+        ("sans_topu", sans_topu, drawn_sans_topu),
+    ]
+    first_bonus = True
+    for key, val, drawn_val in bonus_data:
+        if val is None:
+            continue
+        if first_bonus:
+            parts.append("<div class='ticket-divider'></div>")
+            first_bonus = False
+        label, base_cls = _BONUS_STYLE[key]
+        parts.append(f"<span class='bonus-label'>{label}</span>")
+        cls = "ball-match" if drawn_val is not None and val == drawn_val else base_cls
+        parts.append(f"<div class='{cls}'>{val:02d}</div>")
 
     st.markdown(f"<div class='ticket-box'>{''.join(parts)}{badge_html}</div>",
                 unsafe_allow_html=True)
@@ -456,7 +520,7 @@ with tab1:
         if st.button("💾 KUPONLARI SİSTEME KAYDET", width="stretch"):
             next_draw = int(df["cekilis_no"].max()) + 1
             save_tickets(st.session_state.current_tickets, strategy_clean,
-                         valid_from_draw_no=next_draw)
+                         valid_from_draw_no=next_draw, game=game_key)
             st.toast(f"Kuponlar kaydedildi! Çekiliş #{next_draw}'dan itibaren otomatik takip edilir.")
             st.session_state.current_tickets = []
             st.rerun()
@@ -510,41 +574,47 @@ with tab1:
 
 # TAB 2: TICKET CHECKER
 with tab2:
-    st.subheader("🎟️ Kayıtlı Kuponlar ve Sonuç Sorgulama")
-    saved = load_saved_tickets()
+    st.subheader(f"🎟️ {GAME['name']} — Kayıtlı Kuponlar ve Sonuç Sorgulama")
+    saved = load_saved_tickets(game=game_key)
     if not saved:
-        st.info("Sistemde henüz oynanmış bir kuponunuz bulunmuyor.")
+        st.info(f"Sistemde {GAME['name']} için henüz oynanmış bir kuponunuz bulunmuyor.")
     else:
         with st.expander("🔍 Sonuç Kontrol Paneli", expanded=True):
             draw_input = st.text_input(
-                "6 Ana Sayıyı Girin (Örn: 5, 12, 34, 56, 78, 89)",
-                placeholder="Sayıları virgülle ayırarak giriniz...",
+                f"{GAME['drawn']} Çekilen Sayıyı Girin (virgülle ayır)",
+                placeholder=f"Örn: {', '.join(str(i) for i in range(1, GAME['drawn']+1))}",
             )
-            jc1, jc2 = st.columns(2)
-            joker_input = jc1.number_input("Joker (1-90)", min_value=0, max_value=90,
-                                           value=0, step=1,
-                                           help="0 = girilmedi")
-            ss_input = jc2.number_input("Süper Star (1-90)", min_value=0, max_value=90,
-                                        value=0, step=1,
-                                        help="0 = girilmedi")
+            drawn_bonus_inputs: dict[str, int] = {}
+            if GAME["bonuses"]:
+                bonus_cols = st.columns(len(GAME["bonuses"]))
+                for i, bspec in enumerate(GAME["bonuses"]):
+                    with bonus_cols[i]:
+                        v = st.number_input(
+                            f"{bspec['label']} (1-{bspec['total']})",
+                            min_value=0, max_value=bspec["total"], value=0, step=1,
+                            help="0 = girilmedi",
+                            key=f"bonus_input_{bspec['key']}",
+                        )
+                        drawn_bonus_inputs[bspec["key"]] = v if v > 0 else None
             drawn_numbers = []
             if draw_input:
                 try:
                     drawn_numbers = [int(x.strip()) for x in draw_input.split(",")]
-                    if len(drawn_numbers) != 6:
-                        st.error("Lütfen tam 6 adet sayı girin!")
+                    if len(drawn_numbers) != GAME["drawn"]:
+                        st.error(f"Lütfen tam {GAME['drawn']} adet sayı girin!")
                         drawn_numbers = []
                 except ValueError:
                     st.error("Lütfen geçerli sayılar girin!")
-            drawn_joker = joker_input if joker_input > 0 else None
-            drawn_ss = ss_input if ss_input > 0 else None
+            # Geriye uyumluluk için legacy isimler
+            drawn_joker = drawn_bonus_inputs.get("joker")
+            drawn_ss = drawn_bonus_inputs.get("superstar")
 
         st.divider()
         col1, col2 = st.columns([4, 1])
         col1.markdown("### 📋 Oynanan Kuponlar")
         with col2:
             if st.button("🗑️ Tümünü Sil", width="stretch"):
-                delete_all_tickets()
+                delete_all_tickets(game=game_key)
                 st.rerun()
 
         for record in reversed(saved):

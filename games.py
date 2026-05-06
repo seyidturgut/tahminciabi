@@ -30,8 +30,7 @@ GAMES: dict[str, dict] = {
         ],
         "scrape_id": 9,
         "scrape_slug": "SAYISAL-LOTO-SISAL",
-        "csv_path": "gecmis_sayisal.csv",
-        "csv_legacy_path": "gecmis_cekilisler.csv",  # mevcut dosya adı
+        "csv_path": "gecmis_cekilisler.csv",  # mevcut dosya — geriye uyumluluk
         "draw_days": [0, 2, 5],   # Pzt, Çar, Cmt
         "ticket_cost_tl": 25,
         "prizes_tl": {6: 100_000_000, 5: 150_000, 4: 800, 3: 30},

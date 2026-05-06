@@ -56,8 +56,20 @@ class Predictor:
 
         self.freq_df = self.engine.calculate_frequencies()
         self.gaps_df = self.engine.calculate_gaps()
-        self.mean_sum, self.std_sum = self.engine.get_sum_distribution_stats()
         self.pos_stats = self.engine.analyze_positions()
+
+        # Toplam dağılımı: picks == drawn ise gerçek geçmişten,
+        # değilse iid uniform yaklaşımıyla hesaplanır (On Numara için
+        # 22 çekilenin toplamı ile 10 picks'in toplamı uyuşmaz).
+        if self.picks == self.drawn:
+            self.mean_sum, self.std_sum = self.engine.get_sum_distribution_stats()
+        else:
+            mean_per = (self.total_numbers + 1) / 2.0
+            var_per = (self.total_numbers ** 2 - 1) / 12.0
+            self.mean_sum = self.picks * mean_per
+            # tek bir picks-örneklem için yaklaşık std (replacement-without
+            # düzeltmesi göz ardı ediliyor — yeterince doğru)
+            self.std_sum = (self.picks * var_per) ** 0.5
 
         self._probabilities: Optional[ModelOutput] = None
 
@@ -259,22 +271,17 @@ class Predictor:
         out = self.get_probabilities()
         pool = self._build_smart_pool(out.final, pool_size, randomize_pool)
 
-        # Joker ve Süper Star: pool dışı en yüksek 2 olasılık (tek seferlik, tüm sisteme)
-        masked = out.final.copy()
-        for n in pool:
-            masked[n - 1] = -1
-        sorted_remaining = np.argsort(masked)[::-1]
-        sys_joker = int(sorted_remaining[0]) + 1
-        sys_ss = int(sorted_remaining[1]) + 1
+        # Bonusları sistem geneli için tek seferlik seç (tüm kolonlarda aynı)
+        rng = np.random.default_rng()
+        sys_bonuses = self._pick_bonuses(tuple(pool), out.final, rng)
 
         tickets = []
-        for combo in combinations(pool, 6):
+        for combo in combinations(pool, self.picks):
             conf = self._ticket_confidence(combo)
             tickets.append({
                 "main": tuple(combo),
-                "joker": sys_joker,
-                "superstar": sys_ss,
                 "confidence": conf,
+                **sys_bonuses,
             })
         return tickets, pool
 
@@ -314,53 +321,58 @@ class Predictor:
             pools.append(pool)
             used.update(pool)
 
-        # Tüm pool'ların dışından joker + ss seç
-        all_pool_nums = set().union(*[set(p) for p in pools])
-        masked = out.final.copy()
-        for n in all_pool_nums:
-            masked[n - 1] = -1
-        sorted_remaining = np.argsort(masked)[::-1]
-        sys_joker = int(sorted_remaining[0]) + 1
-        sys_ss = int(sorted_remaining[1]) + 1
+        # Tüm pool'ların dışından bonuslar (tek setlik, tüm sistemler için)
+        rng = np.random.default_rng()
+        all_pool_nums = tuple(sorted(set().union(*[set(p) for p in pools])))
+        sys_bonuses = self._pick_bonuses(all_pool_nums, out.final, rng)
 
         tickets = []
         for idx, pool in enumerate(pools):
-            for combo in combinations(pool, 6):
+            for combo in combinations(pool, self.picks):
                 conf = self._ticket_confidence(combo)
                 tickets.append({
                     "main": tuple(combo),
-                    "joker": sys_joker,
-                    "superstar": sys_ss,
                     "confidence": conf,
                     "pool_index": idx,
+                    **sys_bonuses,
                 })
         return tickets, pools
 
     def _pick_joker_and_superstar(
         self, main6: tuple[int, ...], weights: np.ndarray, rng: np.random.Generator
     ) -> tuple[int, int]:
-        """
-        Ana 6'da olmayan sayılardan ağırlıklı olarak Joker ve Süper Star seçer.
-        Joker ve Süper Star resmi çekilişte ayrı toplar — bizim üretimimizde de
-        ana 6 ile çakışmamasına özen gösteriyoruz.
-        """
-        excluded = set(main6)
-        mask = np.array([(i + 1) not in excluded for i in range(self.total_numbers)])
-        avail_w = weights * mask
-        if avail_w.sum() <= 0:
-            avail_w = mask.astype(float)
-        avail_w = avail_w / avail_w.sum()
-        joker = int(rng.choice(np.arange(1, self.total_numbers + 1), p=avail_w))
+        """Geriye uyumluluk: Sayısal Loto için joker+superstar tuple."""
+        result = self._pick_bonuses(main6, weights, rng)
+        return (result.get("joker", 0), result.get("superstar", 0))
 
-        excluded.add(joker)
-        mask = np.array([(i + 1) not in excluded for i in range(self.total_numbers)])
-        avail_w = weights * mask
-        if avail_w.sum() <= 0:
-            avail_w = mask.astype(float)
-        avail_w = avail_w / avail_w.sum()
-        superstar = int(rng.choice(np.arange(1, self.total_numbers + 1), p=avail_w))
+    def _pick_bonuses(
+        self, main: tuple[int, ...], weights: np.ndarray, rng: np.random.Generator
+    ) -> dict[str, int]:
+        """
+        Oyun konfigine göre her bonus topu için bir sayı seçer.
 
-        return joker, superstar
+        Bonus topları farklı havuzdan gelir (kendi `total` aralığı). Ana
+        sayılarla çakışmama kontrolü sadece bonus aralığı ana aralık ile
+        aynı/üst kümesi olduğunda uygulanır.
+        """
+        result: dict[str, int] = {}
+        for spec in self.bonuses:
+            bonus_total = spec["total"]
+            arr = np.arange(1, bonus_total + 1)
+            if bonus_total == self.total_numbers:
+                # Aynı aralık: ana ve diğer bonusla çakışmasın
+                excluded = set(main) | set(result.values())
+                mask = np.array([(i + 1) not in excluded for i in range(bonus_total)])
+                w = weights[:bonus_total] * mask if len(weights) >= bonus_total else mask.astype(float)
+                if w.sum() <= 0:
+                    w = mask.astype(float)
+                w = w / w.sum()
+            else:
+                # Farklı aralık (örn. Şans Topu 1-14): uniform
+                w = np.full(bonus_total, 1.0 / bonus_total)
+            pick = int(rng.choice(arr, p=w))
+            result[spec["key"]] = pick
+        return result
 
     def generate_tickets(
         self,
@@ -404,15 +416,11 @@ class Predictor:
             if not self._is_valid_combination(combo_t, top20=top20):
                 continue
 
-            joker, superstar = self._pick_joker_and_superstar(combo_t, weights, rng)
+            bonuses = self._pick_bonuses(combo_t, weights, rng)
             conf = self._ticket_confidence(combo_t) if strategy == "Profesör Modu" else 0.0
 
-            valid.append({
-                "main": combo_t,
-                "joker": joker,
-                "superstar": superstar,
-                "confidence": conf,
-            })
+            ticket = {"main": combo_t, "confidence": conf, **bonuses}
+            valid.append(ticket)
             seen_main.add(combo_t)
 
         return valid, attempts
