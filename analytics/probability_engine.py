@@ -16,10 +16,10 @@ import pandas as pd
 from . import bayesian, markov, ml_model, randomness_tests
 
 DEFAULT_WEIGHTS = {
-    "markov": 0.20,
-    "bayesian": 0.25,
-    "deviation": 0.20,
-    "ml": 0.35,
+    "markov": 0.15,
+    "bayesian": 0.20,
+    "deviation": 0.35,  # sapma sömürüsü ağırlığı artırıldı
+    "ml": 0.30,
 }
 
 

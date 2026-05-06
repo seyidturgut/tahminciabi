@@ -80,7 +80,9 @@ def deviation_scores(df: pd.DataFrame) -> np.ndarray:
     abs_z = np.abs(z)
     if abs_z.max() == 0:
         return np.full(TOTAL, 1.0 / TOTAL)
-    weights = 1.0 + abs_z  # uniform üzerine sapma kadar boost
+    # Agresif sapma sömürüsü: |z| üstel olarak boost edilir, böylece
+    # 2σ üstündeki sayılar 1σ'lardan belirgin biçimde daha çok ağırlık alır.
+    weights = 1.0 + abs_z ** 1.8
     return weights / weights.sum()
 
 
