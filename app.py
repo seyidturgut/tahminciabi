@@ -948,7 +948,10 @@ with tab4:
                           drawn_sans_topu=d_st)
 
             if saved:
-                st.markdown("### 📊 Sizin Kuponlarınızdaki Durum")
+                # Önce tüm kuponları değerlendir, toplam kazancı hesapla
+                evaluated = []
+                total_winnings = 0
+                winning_count = 0
                 for record in reversed(saved):
                     for ticket in record["kuponlar"]:
                         if isinstance(ticket, dict):
@@ -964,29 +967,61 @@ with tab4:
                         ss_hit = t_ss is not None and t_ss == d_ss
                         st_hit = t_st is not None and d_st is not None and t_st == d_st
                         bonus_hits = {"joker": joker_hit, "superstar": ss_hit, "sans_topu": st_hit}
-                        parts_b = []
-                        win_threshold = 3 if game_key != "on_numara" else 6
-                        if m >= win_threshold or (game_key == "on_numara" and m == 0):
-                            parts_b.append(f"<span style='color:#111;background:#00E676;padding:3px 10px;"
-                                           f"border-radius:6px;font-size:14px;'>{m} ANA 🏆</span>")
-                        elif m > 0:
-                            parts_b.append(f"<span style='color:#ff4444;font-size:14px;'>{m} ana</span>")
-                        if joker_hit:
-                            parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
-                        if ss_hit:
-                            parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
-                        if st_hit:
-                            parts_b.append("<span style='color:#FF9800;font-size:14px;'>+ŞANS TOPU ⭐</span>")
-                        parts_b.append(prize_badge_html(GAME, m, bonus_hits, True))
-                        badge = ""
-                        if parts_b:
-                            badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
-                                     f"gap:8px;align-items:center;'>{''.join(parts_b)}</div>")
-                        render_ticket(main, joker=t_joker, superstar=t_ss, sans_topu=t_st,
-                                      drawn_numbers=drawn,
-                                      drawn_joker=d_joker, drawn_superstar=d_ss,
-                                      drawn_sans_topu=d_st,
-                                      badge_html=badge)
+                        prize = calc_prize_tl(GAME, m, bonus_hits)
+                        if prize > 0:
+                            winning_count += 1
+                            total_winnings += prize
+                        evaluated.append({
+                            "main": main, "t_joker": t_joker, "t_ss": t_ss, "t_st": t_st,
+                            "m": m, "joker_hit": joker_hit, "ss_hit": ss_hit,
+                            "st_hit": st_hit, "bonus_hits": bonus_hits, "prize": prize,
+                        })
+
+                # BÜYÜK TOPLAM KAZANÇ BANNER'I
+                total_str = f"{total_winnings:,.0f}".replace(",", ".")
+                banner_color = "#00E676" if total_winnings > 0 else "#666"
+                glow = f"box-shadow:0 0 30px {banner_color}55;" if total_winnings > 0 else ""
+                st.markdown(
+                    f"<div style='background:linear-gradient(135deg,#0e1f17,#1a2e23);"
+                    f"border:2px solid {banner_color};border-radius:16px;padding:30px 25px;"
+                    f"margin:20px 0;text-align:center;{glow}'>"
+                    f"<div style='color:#888;font-size:14px;font-weight:600;letter-spacing:1.5px;"
+                    f"text-transform:uppercase;margin-bottom:8px;'>"
+                    f"💰 Toplam Tahmini Kazancın</div>"
+                    f"<div style='color:{banner_color};font-size:54px;font-weight:900;"
+                    f"line-height:1.1;text-shadow:0 0 20px {banner_color}88;'>"
+                    f"₺ {total_str}</div>"
+                    f"<div style='color:#aaa;font-size:13px;margin-top:10px;'>"
+                    f"{winning_count} tutan kupon / {len(evaluated)} toplam kupon"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+                st.markdown("### 📊 Sizin Kuponlarınızdaki Durum")
+                for ev in evaluated:
+                    parts_b = []
+                    win_threshold = 3 if game_key != "on_numara" else 6
+                    m = ev["m"]
+                    if m >= win_threshold or (game_key == "on_numara" and m == 0):
+                        parts_b.append(f"<span style='color:#111;background:#00E676;padding:3px 10px;"
+                                       f"border-radius:6px;font-size:14px;'>{m} ANA 🏆</span>")
+                    elif m > 0:
+                        parts_b.append(f"<span style='color:#ff4444;font-size:14px;'>{m} ana</span>")
+                    if ev["joker_hit"]:
+                        parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
+                    if ev["ss_hit"]:
+                        parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
+                    if ev["st_hit"]:
+                        parts_b.append("<span style='color:#FF9800;font-size:14px;'>+ŞANS TOPU ⭐</span>")
+                    parts_b.append(prize_badge_html(GAME, m, ev["bonus_hits"], True))
+                    badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
+                             f"gap:8px;align-items:center;'>{''.join(parts_b)}</div>")
+                    render_ticket(ev["main"], joker=ev["t_joker"], superstar=ev["t_ss"],
+                                  sans_topu=ev["t_st"],
+                                  drawn_numbers=drawn,
+                                  drawn_joker=d_joker, drawn_superstar=d_ss,
+                                  drawn_sans_topu=d_st,
+                                  badge_html=badge)
             else:
                 st.info("Sistemde karşılaştırılacak kayıtlı kuponunuz bulunmuyor.")
         except ScrapeFailedError as e:
