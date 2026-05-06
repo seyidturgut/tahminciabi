@@ -18,8 +18,8 @@ st.markdown("""
         background-color: #0E1117;
     }
     
-    /* Hide Streamlit Header and Menu */
-    header {visibility: hidden;}
+    /* Hide Streamlit Deploy Button and Menu */
+    .stDeployButton {display: none;}
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     
