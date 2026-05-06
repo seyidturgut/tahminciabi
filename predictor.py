@@ -4,12 +4,15 @@ Profesör Modu: 4 modelin birleşik olasılık vektörü ile ağırlıklı sampl
 matematiksel filtreler (Gauss toplam, ardışık limit, asal denge, ondalık dağılım,
 pozisyonel sınırlar, yüksek-skorlu sayı zorunluluğu).
 
-Klasik modlar (Sıcak / Soğuk / Süper Hibrit) korunur; bunlar olasılık motorunu
-kullanmaz.
+Sistemli Oyun: top-N olasılıklı sayılardan tüm C(N,6) kombinasyonu — havuzdaki
+N sayıdan 3+ doğru çıkarsa kolonlardan en az biri garantili 3+ tutar.
+
+Klasik modlar (Sıcak / Soğuk / Süper Hibrit) korunur.
 """
 from __future__ import annotations
 
 import math
+from itertools import combinations
 from typing import Optional
 
 import numpy as np
@@ -127,6 +130,43 @@ class Predictor:
         # Pozitif: olasılık > uniform. Sigmoid ile 0-1'e sıkıştır.
         delta = log_p - baseline
         return float(1.0 / (1.0 + math.exp(-delta)))
+
+    def generate_system_tickets(self, pool_size: int = 7) -> tuple[list[dict], list[int]]:
+        """
+        Sistemli oyun: top-N olasılıklı sayılardan tüm 6'lı kombinasyonları
+        üretir. Filtreler uygulanmaz — sistemin matematiksel garantisini
+        bozmamak için.
+
+        Garanti: havuzdaki N sayıdan en az 3'ü çekilişte çıkarsa, üretilen
+        kolonlardan EN AZ BİRİ 3+ tutar.
+
+        Returns:
+            (tickets, pool) — pool: top-N olasılıklı sayı listesi (sıralı)
+        """
+        if not 6 <= pool_size <= 12:
+            raise ValueError("pool_size 6-12 arasında olmalı")
+
+        out = self.get_probabilities()
+        pool = sorted(int(i + 1) for i in np.argsort(out.final)[-pool_size:])
+
+        # Joker ve Süper Star: pool dışı en yüksek 2 olasılık (tek seferlik, tüm sisteme)
+        masked = out.final.copy()
+        for n in pool:
+            masked[n - 1] = -1
+        sorted_remaining = np.argsort(masked)[::-1]
+        sys_joker = int(sorted_remaining[0]) + 1
+        sys_ss = int(sorted_remaining[1]) + 1
+
+        tickets = []
+        for combo in combinations(pool, 6):
+            conf = self._ticket_confidence(combo)
+            tickets.append({
+                "main": tuple(combo),
+                "joker": sys_joker,
+                "superstar": sys_ss,
+                "confidence": conf,
+            })
+        return tickets, pool
 
     def _pick_joker_and_superstar(
         self, main6: tuple[int, ...], weights: np.ndarray, rng: np.random.Generator

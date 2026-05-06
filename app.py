@@ -11,7 +11,7 @@ from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_TL
 import auto_tracker
 
-APP_VERSION = "v2.4.0"
+APP_VERSION = "v2.5.0"
 APP_BUILD_DATE = "2026-05-06"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
@@ -180,15 +180,39 @@ with st.sidebar:
     st.header("⚙️ Motor Ayarları")
     strategy = st.radio(
         "Strateji",
-        ["🎓 Profesör Modu", "Süper Hibrit", "Sıcak Sayılar", "Soğuk Sayılar"],
+        ["🎯 Sistemli Oyun (Garanti)", "🎓 Profesör Modu",
+         "Süper Hibrit", "Sıcak Sayılar", "Soğuk Sayılar"],
         help=(
-            "Profesör Modu: Markov zincirleri, Bayesian posterior, rasgelelik testleri ve "
-            "LightGBM ML ensemble'ın ağırlıklı birleşimi. Üretilen kuponlar yüksek olasılıklı "
-            "ve istatistiksel filtrelerden geçer; her kupon için güven skoru hesaplanır."
+            "🎯 Sistemli Oyun: top-N olasılıklı sayıdan tüm kombinasyonlar — havuzda 3+ "
+            "doğru çıkarsa garantili 3 tuttur (matematiksel).\n\n"
+            "🎓 Profesör Modu: Markov + Bayesian + rasgelelik + LightGBM ile bağımsız "
+            "kuponlar."
         ),
     )
-    strategy_clean = strategy.replace("🎓 ", "")
-    num_tickets = st.slider("Üretilecek Kolon Sayısı", 1, 10, 5)
+    strategy_clean = strategy.replace("🎓 ", "").replace("🎯 ", "")
+
+    if strategy == "🎯 Sistemli Oyun (Garanti)":
+        pool_size = st.select_slider(
+            "Sistem Boyutu (havuzdaki sayı)",
+            options=[7, 8, 9, 10],
+            value=7,
+        )
+        from math import comb
+        sys_kolon = comb(pool_size, 6)
+        sys_cost = sys_kolon * 25
+        # Hipergeometrik P(3+ winner pool'da)
+        c_total = comb(90, pool_size)
+        p_lt3 = sum(comb(6, k) * comb(84, pool_size - k) / c_total for k in range(3))
+        p_3plus = (1 - p_lt3) * 100
+        st.caption(
+            f"**Sistem {pool_size}**: {sys_kolon} kolon × 25 TL = "
+            f"**{sys_cost:,} TL**. Havuzda 3+ doğru çıkma şansı **%{p_3plus:.0f}**."
+            .replace(",", ".")
+        )
+        num_tickets = sys_kolon
+    else:
+        pool_size = None
+        num_tickets = st.slider("Üretilecek Kolon Sayısı", 1, 10, 5)
 
     st.divider()
     if st.button("🔄 ML Modelini Yeniden Eğit", width="stretch"):
@@ -257,16 +281,46 @@ with tab1:
 
     if "current_tickets" not in st.session_state:
         st.session_state.current_tickets = []
+        st.session_state.current_pool = None
 
     if st.button("🚀 KUPON ÜRET", width="stretch", type="primary"):
-        with st.spinner("Olasılık motoru çalışıyor, filtreler uygulanıyor..."):
-            tickets, attempts = predictor.generate_tickets(
-                num_tickets=num_tickets, strategy=strategy_clean
+        if strategy == "🎯 Sistemli Oyun (Garanti)":
+            with st.spinner(f"Sistem {pool_size} hazırlanıyor..."):
+                tickets, pool = predictor.generate_system_tickets(pool_size=pool_size)
+            st.session_state.current_tickets = tickets
+            st.session_state.current_pool = pool
+            st.success(
+                f"✅ Sistem {pool_size} üretildi — **{len(tickets)} kolon**. "
+                f"Havuz: {pool}"
             )
-        st.session_state.current_tickets = tickets
-        st.success(f"✅ {len(tickets)} kupon üretildi ({attempts} varyasyon denendi).")
+        else:
+            with st.spinner("Olasılık motoru çalışıyor, filtreler uygulanıyor..."):
+                tickets, attempts = predictor.generate_tickets(
+                    num_tickets=num_tickets, strategy=strategy_clean
+                )
+            st.session_state.current_tickets = tickets
+            st.session_state.current_pool = None
+            st.success(f"✅ {len(tickets)} kupon üretildi ({attempts} varyasyon denendi).")
 
     if st.session_state.current_tickets:
+        if st.session_state.current_pool:
+            pool = st.session_state.current_pool
+            pool_balls = "".join(
+                f"<div class='ball-superstar' style='border-color:#FFD54F;color:#FFD54F;'>{n:02d}</div>"
+                for n in pool
+            )
+            st.markdown(
+                f"<div style='background:#1a1c23;border:1px solid #333;border-radius:10px;"
+                f"padding:15px;margin:10px 0;'>"
+                f"<div style='color:#FFD54F;font-size:14px;font-weight:600;margin-bottom:10px;'>"
+                f"🎯 SİSTEM HAVUZU ({len(pool)} sayı)</div>"
+                f"<div style='display:flex;gap:8px;flex-wrap:wrap;'>{pool_balls}</div>"
+                f"<div style='color:#888;font-size:12px;margin-top:10px;'>"
+                f"Bu sayılardan en az 3'ü çekilirse <b>en az bir kolon kesin 3 tuttur</b>. "
+                f"Daha fazla doğru çıkarsa daha çok ve daha yüksek dereceli tutturma garantisi.</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
         st.markdown("### 🎲 Üretilen Kolonlar (6 Ana + Joker + Süper Star)")
         for ticket in st.session_state.current_tickets:
             conf = ticket.get("confidence", 0.0)
