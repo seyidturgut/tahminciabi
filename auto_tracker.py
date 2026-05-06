@@ -1,146 +1,195 @@
-"""Otomatik sonuç takibi ve kupon değerlendirmesi.
-
-Kullanıcı bir kupon kaydettikten sonra, app her açıldığında bu modül:
-1) Son çekiliş numarasını siteden alır,
-2) Daha önce kontrol edilmemiş çekilişleri tek tek çeker,
-3) Kayıtlı her kuponu değerlendirir (sadece o çekiliş için geçerli olanları),
-4) Sonuçları otomatik takip dosyasına yazar.
-
-Streamlit Cloud filesystem ephemeral — bu dosyalar app restart olduğunda
-sıfırlanır; bu, oynanan_kuponlar.json ile aynı kabul gören bir kısıtlamadır.
-"""
+"""Otomatik sonuç takibi ve kupon değerlendirmesi — oyun başına izole."""
 from __future__ import annotations
 
 import json
 import os
 from typing import Optional
 
-from analytics.expected_value import DEFAULT_PRIZES_TL
+from games import get_game, DEFAULT_GAME_KEY
 from scraper import ScrapeFailedError, fetch_draw, fetch_latest_draw_number
 from ticket_manager import load_saved_tickets
 
-TRACKING_FILE = "otomatik_takip.json"
-SETTINGS_FILE = "otomasyon_ayarlari.json"
+
+def _tracking_file(game_key: str) -> str:
+    return f"otomatik_takip_{game_key}.json"
+
+
+def _settings_file(game_key: str) -> str:
+    return f"otomasyon_ayarlari_{game_key}.json"
 
 
 # ---------- Settings ----------
 
-def load_settings() -> dict:
-    if not os.path.exists(SETTINGS_FILE):
-        return {"enabled": False, "last_checked_draw_no": 0, "prizes": DEFAULT_PRIZES_TL}
+def load_settings(game_key: Optional[str] = None) -> dict:
+    gk = game_key or DEFAULT_GAME_KEY
+    g = get_game(gk)
+    path = _settings_file(gk)
+    default = {
+        "enabled": False,
+        "last_checked_draw_no": 0,
+        "prizes": g["prizes_tl"],
+    }
+    # Migrate legacy file (Sayısal Loto only) on first read
+    legacy = "otomasyon_ayarlari.json"
+    if gk == DEFAULT_GAME_KEY and not os.path.exists(path) and os.path.exists(legacy):
+        try:
+            os.rename(legacy, path)
+        except OSError:
+            pass
+    if not os.path.exists(path):
+        return default
     try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # Backfill defaults
-        data.setdefault("enabled", False)
-        data.setdefault("last_checked_draw_no", 0)
-        data.setdefault("prizes", DEFAULT_PRIZES_TL)
+        for k, v in default.items():
+            data.setdefault(k, v)
+        # prizes tuple keys serialize → string; uniform tuple-string normalize edilmiyor,
+        # JSON için string keys de OK çünkü game config'i fallback olarak kullanırız
         return data
     except Exception:
-        return {"enabled": False, "last_checked_draw_no": 0, "prizes": DEFAULT_PRIZES_TL}
+        return default
 
 
-def save_settings(settings: dict) -> None:
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings, f, ensure_ascii=False, indent=2)
+def save_settings(settings: dict, game_key: Optional[str] = None) -> None:
+    gk = game_key or DEFAULT_GAME_KEY
+    # tuple key'li prize tabloları JSON'a yazılırken string'e çevrilmeli
+    serializable = dict(settings)
+    if isinstance(serializable.get("prizes"), dict):
+        serializable["prizes"] = {str(k): v for k, v in serializable["prizes"].items()}
+    with open(_settings_file(gk), "w", encoding="utf-8") as f:
+        json.dump(serializable, f, ensure_ascii=False, indent=2)
 
 
 # ---------- Tracking history ----------
 
-def load_tracking() -> list:
-    if not os.path.exists(TRACKING_FILE):
+def load_tracking(game_key: Optional[str] = None) -> list:
+    gk = game_key or DEFAULT_GAME_KEY
+    path = _tracking_file(gk)
+    legacy = "otomatik_takip.json"
+    if gk == DEFAULT_GAME_KEY and not os.path.exists(path) and os.path.exists(legacy):
+        try:
+            os.rename(legacy, path)
+        except OSError:
+            pass
+    if not os.path.exists(path):
         return []
     try:
-        with open(TRACKING_FILE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return []
 
 
-def save_tracking(records: list) -> None:
-    with open(TRACKING_FILE, "w", encoding="utf-8") as f:
+def save_tracking(records: list, game_key: Optional[str] = None) -> None:
+    gk = game_key or DEFAULT_GAME_KEY
+    with open(_tracking_file(gk), "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
 
-def reset_tracking() -> None:
-    if os.path.exists(TRACKING_FILE):
-        os.remove(TRACKING_FILE)
+def reset_tracking(game_key: Optional[str] = None) -> None:
+    gk = game_key or DEFAULT_GAME_KEY
+    path = _tracking_file(gk)
+    if os.path.exists(path):
+        os.remove(path)
 
 
 # ---------- Evaluation ----------
 
-def _evaluate_ticket(ticket, drawn: list, joker: Optional[int],
-                     superstar: Optional[int], prizes: dict) -> dict:
+def _calc_prize(game: dict, main_hits: int, bonus_hits: dict) -> int:
+    prizes = game["prizes_tl"]
+    if game["key"] == "sans_topu":
+        st_hit = 1 if bonus_hits.get("sans_topu") else 0
+        return int(prizes.get((main_hits, st_hit), 0))
+    if game["key"] == "on_numara":
+        return int(prizes.get(main_hits, 0))
+    # sayisal_loto
+    main = prizes.get(main_hits, 0) if main_hits >= 3 else 0
+    bonus = 0
+    if bonus_hits.get("joker"):
+        bonus += 50
+    if bonus_hits.get("superstar"):
+        bonus += 100
+    return int(main + bonus)
+
+
+def _is_winning(game: dict, main_hits: int, bonus_hits: dict) -> bool:
+    if game["key"] == "on_numara":
+        return main_hits >= 6 or main_hits == 0
+    if game["key"] == "sans_topu":
+        st_hit = bonus_hits.get("sans_topu", False)
+        # Şans Topu: 1+1 minimumdan başlar
+        return (main_hits >= 3) or (main_hits >= 1 and st_hit) or (main_hits >= 2 and st_hit)
+    # sayisal_loto: 3+ ana ya da joker/ss
+    return main_hits >= 3 or bonus_hits.get("joker") or bonus_hits.get("superstar")
+
+
+def _evaluate_ticket(ticket, drawn: list, draw_bonuses: dict, game: dict) -> dict:
     if isinstance(ticket, dict):
         main = list(ticket.get("main", []))
         t_joker = ticket.get("joker")
         t_ss = ticket.get("superstar")
+        t_st = ticket.get("sans_topu")
     else:
         main = list(ticket)
-        t_joker = None
-        t_ss = None
+        t_joker = t_ss = t_st = None
 
     main_hits = len(set(main).intersection(drawn))
-    joker_hit = t_joker is not None and joker is not None and t_joker == joker
-    ss_hit = t_ss is not None and superstar is not None and t_ss == superstar
-
-    prize = prizes.get(main_hits, 0) if main_hits >= 3 else 0
+    joker_hit = t_joker is not None and draw_bonuses.get("joker") is not None and t_joker == draw_bonuses["joker"]
+    ss_hit = t_ss is not None and draw_bonuses.get("superstar") is not None and t_ss == draw_bonuses["superstar"]
+    st_hit = t_st is not None and draw_bonuses.get("sans_topu") is not None and t_st == draw_bonuses["sans_topu"]
+    bonus_hits = {"joker": joker_hit, "superstar": ss_hit, "sans_topu": st_hit}
+    prize = _calc_prize(game, main_hits, bonus_hits)
     return {
         "main": main,
         "joker": t_joker,
         "superstar": t_ss,
+        "sans_topu": t_st,
         "main_hits": main_hits,
         "joker_hit": joker_hit,
         "superstar_hit": ss_hit,
+        "sans_topu_hit": st_hit,
         "estimated_prize_tl": prize,
     }
 
 
-def check_now(prizes: Optional[dict] = None, force_initial: bool = False) -> dict:
-    """
-    Yeni çekilişleri kontrol et, kayıtlı kuponları değerlendir, takibe ekle.
-
-    Returns:
-        {"checked": int, "new_records": int, "winnings": int, "error": str|None}
-    """
-    settings = load_settings()
-    prizes = prizes or settings.get("prizes", DEFAULT_PRIZES_TL)
+def check_now(game_key: Optional[str] = None, force_initial: bool = False) -> dict:
+    """Yeni çekilişleri kontrol et, kayıtlı kuponları değerlendir."""
+    gk = game_key or DEFAULT_GAME_KEY
+    g = get_game(gk)
+    settings = load_settings(gk)
 
     if not settings.get("enabled", False):
         return {"checked": 0, "new_records": 0, "winnings": 0,
                 "error": "Otomatik takip kapalı"}
 
     try:
-        latest_remote = fetch_latest_draw_number()
+        latest_remote = fetch_latest_draw_number(g)
     except ScrapeFailedError as e:
         return {"checked": 0, "new_records": 0, "winnings": 0, "error": str(e)}
 
     last_checked = settings.get("last_checked_draw_no", 0)
 
-    # İlk kez açıldığında geriye dönük kontrol etme — sadece bu noktayı işaretle.
     if last_checked == 0 and not force_initial:
         settings["last_checked_draw_no"] = latest_remote
-        save_settings(settings)
+        save_settings(settings, gk)
         return {"checked": 0, "new_records": 0, "winnings": 0, "error": None}
 
     if latest_remote <= last_checked:
         return {"checked": 0, "new_records": 0, "winnings": 0, "error": None}
 
-    saved_records = load_saved_tickets()
-    tracking = load_tracking()
+    saved_records = load_saved_tickets(game=gk)
+    tracking = load_tracking(gk)
     new_count = 0
     total_winnings = 0
 
     for n in range(last_checked + 1, latest_remote + 1):
         try:
-            d = fetch_draw(n)
+            d = fetch_draw(n, game=g)
         except ScrapeFailedError:
-            # Henüz publish olmayan çekilişi sessizce atla.
             continue
 
         drawn = list(d["sayilar"])
-        joker = d.get("joker")
-        ss = d.get("superstar")
+        draw_bonuses = {b["key"]: d.get(b["key"]) for b in g["bonuses"]}
         date_str = d["tarih"].strftime("%d-%m-%Y") if hasattr(d["tarih"], "strftime") else str(d["tarih"])
 
         ticket_evals = []
@@ -150,9 +199,12 @@ def check_now(prizes: Optional[dict] = None, force_initial: bool = False) -> dic
             if n < valid_from:
                 continue
             for idx, ticket in enumerate(record.get("kuponlar", [])):
-                ev = _evaluate_ticket(ticket, drawn, joker, ss, prizes)
-                # Sadece kazandıran kuponları kaydet (3+, joker veya superstar)
-                if ev["main_hits"] >= 3 or ev["joker_hit"] or ev["superstar_hit"]:
+                ev = _evaluate_ticket(ticket, drawn, draw_bonuses, g)
+                bonus_hits = {
+                    "joker": ev["joker_hit"], "superstar": ev["superstar_hit"],
+                    "sans_topu": ev["sans_topu_hit"],
+                }
+                if _is_winning(g, ev["main_hits"], bonus_hits):
                     ticket_evals.append({
                         "record_id": record.get("id"),
                         "record_tarih": record.get("tarih"),
@@ -165,8 +217,7 @@ def check_now(prizes: Optional[dict] = None, force_initial: bool = False) -> dic
             "cekilis_no": n,
             "tarih": date_str,
             "drawn": drawn,
-            "joker": joker,
-            "superstar": ss,
+            **draw_bonuses,
             "kazanan_kuponlar": ticket_evals,
             "toplam_tahmini_kazanc_tl": draw_winnings,
         })
@@ -174,33 +225,35 @@ def check_now(prizes: Optional[dict] = None, force_initial: bool = False) -> dic
         total_winnings += draw_winnings
 
     settings["last_checked_draw_no"] = latest_remote
-    save_settings(settings)
-    save_tracking(tracking)
+    save_settings(settings, gk)
+    save_tracking(tracking, gk)
     return {"checked": latest_remote - last_checked, "new_records": new_count,
             "winnings": total_winnings, "error": None}
 
 
-def get_unread_count() -> int:
-    """Son görüntülemeden bu yana eklenen yeni takip kayıtlarının sayısı."""
-    settings = load_settings()
-    tracking = load_tracking()
+def get_unread_count(game_key: Optional[str] = None) -> int:
+    gk = game_key or DEFAULT_GAME_KEY
+    settings = load_settings(gk)
+    tracking = load_tracking(gk)
     last_seen = settings.get("last_seen_tracking_index", 0)
     return max(0, len(tracking) - last_seen)
 
 
-def mark_all_seen() -> None:
-    settings = load_settings()
-    settings["last_seen_tracking_index"] = len(load_tracking())
-    save_settings(settings)
+def mark_all_seen(game_key: Optional[str] = None) -> None:
+    gk = game_key or DEFAULT_GAME_KEY
+    settings = load_settings(gk)
+    settings["last_seen_tracking_index"] = len(load_tracking(gk))
+    save_settings(settings, gk)
 
 
-def set_enabled(enabled: bool) -> None:
-    settings = load_settings()
+def set_enabled(enabled: bool, game_key: Optional[str] = None) -> None:
+    gk = game_key or DEFAULT_GAME_KEY
+    g = get_game(gk)
+    settings = load_settings(gk)
     settings["enabled"] = enabled
     if enabled and settings.get("last_checked_draw_no", 0) == 0:
-        # İlk aktivasyonda mevcut son çekilişten sonrakilere bak — geriye dönük yapma.
         try:
-            settings["last_checked_draw_no"] = fetch_latest_draw_number()
+            settings["last_checked_draw_no"] = fetch_latest_draw_number(g)
         except ScrapeFailedError:
             pass
-    save_settings(settings)
+    save_settings(settings, gk)

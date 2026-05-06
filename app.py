@@ -12,8 +12,8 @@ from analytics.expected_value import DEFAULT_PRIZES_TL, DEFAULT_COST_PER_TICKET_
 from games import GAMES, get_game
 import auto_tracker
 
-APP_VERSION = "v2.7.3"
-APP_BUILD_DATE = "2026-05-06"
+APP_VERSION = "v2.7.4"
+APP_BUILD_DATE = "2026-05-07"
 
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
 
@@ -159,15 +159,15 @@ engine, predictor = get_engine_and_predictor(APP_VERSION, game_key)
 
 # --- AUTO TRACKER: Her oturumda 1 kez sessizce kontrol et ---
 @st.cache_data(ttl=3600, show_spinner=False)
-def auto_tracker_check(_version: str):
+def auto_tracker_check(_version: str, gk: str):
     """1 saatte 1 kez otomatik takip kontrolü (cache_data ile rate-limit)."""
-    return auto_tracker.check_now()
+    return auto_tracker.check_now(game_key=gk)
 
 
-_auto_tracker_settings = auto_tracker.load_settings()
+_auto_tracker_settings = auto_tracker.load_settings(game_key=game_key)
 if _auto_tracker_settings.get("enabled"):
     try:
-        auto_tracker_check(APP_VERSION)
+        auto_tracker_check(APP_VERSION, game_key)
     except Exception:
         pass  # Sessiz başarısızlık — kullanıcı arayüzü etkilenmesin
 
@@ -348,9 +348,32 @@ JOKER_BONUS_TL = 50
 SS_BONUS_TL = 100
 
 
-def calc_prize_tl(match_count: int, joker_hit: bool, ss_hit: bool) -> int:
-    main = DEFAULT_PRIZES_TL.get(match_count, 0) if match_count >= 3 else 0
-    return int(main + (JOKER_BONUS_TL if joker_hit else 0) + (SS_BONUS_TL if ss_hit else 0))
+def calc_prize_tl(game: dict, match_count: int, bonus_hits: dict) -> int:
+    """Oyuna göre ödül hesabı.
+
+    game: GAME config dict.
+    match_count: ana sayılarda doğru sayısı.
+    bonus_hits: {"joker": True, "superstar": False, "sans_topu": True}
+    """
+    prizes = game.get("prizes_tl", {})
+    key = game["key"]
+
+    if key == "sans_topu":
+        st_hit = 1 if bonus_hits.get("sans_topu") else 0
+        amount = prizes.get((match_count, st_hit), 0)
+        return int(amount)
+
+    if key == "on_numara":
+        return int(prizes.get(match_count, 0))
+
+    # Sayısal Loto (default)
+    main = prizes.get(match_count, 0) if match_count >= 3 else 0
+    bonus = 0
+    if bonus_hits.get("joker"):
+        bonus += JOKER_BONUS_TL
+    if bonus_hits.get("superstar"):
+        bonus += SS_BONUS_TL
+    return int(main + bonus)
 
 
 def fmt_tl(v: int) -> str:
@@ -361,10 +384,10 @@ def fmt_tl(v: int) -> str:
     return f"₺{v}"
 
 
-def prize_badge_html(match_count: int, joker_hit: bool, ss_hit: bool, drawn_known: bool) -> str:
+def prize_badge_html(game: dict, match_count: int, bonus_hits: dict, drawn_known: bool) -> str:
     if not drawn_known:
         return ""
-    prize = calc_prize_tl(match_count, joker_hit, ss_hit)
+    prize = calc_prize_tl(game, match_count, bonus_hits)
     if prize > 0:
         color = "#00E676" if prize >= 800 else "#FFD54F"
         return (f"<span style='margin-left:12px;color:{color};font-weight:700;font-size:15px;'>"
@@ -410,7 +433,7 @@ def render_ticket(numbers, joker=None, superstar=None, sans_topu=None,
 
 
 # --- Notification: yeni otomatik takip sonuçları ---
-_unread = auto_tracker.get_unread_count() if _auto_tracker_settings.get("enabled") else 0
+_unread = auto_tracker.get_unread_count(game_key=game_key) if _auto_tracker_settings.get("enabled") else 0
 if _unread > 0:
     st.info(
         f"🔔 **{_unread} yeni çekilişin sonucu** otomatik kontrol edildi. "
@@ -501,7 +524,11 @@ with tab1:
                 f"</div>",
                 unsafe_allow_html=True,
             )
-        st.markdown("### 🎲 Üretilen Kolonlar (6 Ana + Joker + Süper Star)")
+        bonus_label = " + ".join(b["label"] for b in GAME["bonuses"]) if GAME["bonuses"] else ""
+        ticket_header = f"{GAME['picks']} Ana"
+        if bonus_label:
+            ticket_header += f" + {bonus_label}"
+        st.markdown(f"### 🎲 Üretilen Kolonlar ({ticket_header})")
         for ticket in st.session_state.current_tickets:
             conf = ticket.get("confidence", 0.0)
             badge = ""
@@ -513,6 +540,7 @@ with tab1:
                 list(ticket["main"]),
                 joker=ticket.get("joker"),
                 superstar=ticket.get("superstar"),
+                sans_topu=ticket.get("sans_topu"),
                 badge_html=badge,
             )
 
@@ -620,23 +648,26 @@ with tab2:
         for record in reversed(saved):
             st.caption(f"📅 {record['tarih']} | 🧠 Strateji: {record['strateji']}")
             for ticket in record["kuponlar"]:
-                # Backward compat: legacy = list[int], new = dict
                 if isinstance(ticket, dict):
                     main = list(ticket["main"]) if "main" in ticket else list(ticket.get("kuponlar", []))
                     t_joker = ticket.get("joker")
                     t_ss = ticket.get("superstar")
+                    t_st = ticket.get("sans_topu")
                 else:
                     main = list(ticket)
-                    t_joker = None
-                    t_ss = None
+                    t_joker = t_ss = t_st = None
 
                 match_count = len(set(main).intersection(drawn_numbers)) if drawn_numbers else 0
                 joker_hit = t_joker is not None and drawn_joker is not None and t_joker == drawn_joker
                 ss_hit = t_ss is not None and drawn_ss is not None and t_ss == drawn_ss
+                drawn_st = drawn_bonus_inputs.get("sans_topu")
+                st_hit = t_st is not None and drawn_st is not None and t_st == drawn_st
+                bonus_hits = {"joker": joker_hit, "superstar": ss_hit, "sans_topu": st_hit}
                 badge = ""
                 if drawn_numbers:
                     parts_b = []
-                    if match_count >= 3:
+                    win_threshold = 3 if game_key != "on_numara" else 6
+                    if match_count >= win_threshold or (game_key == "on_numara" and match_count == 0):
                         parts_b.append(f"<span style='color:#111;background:#00E676;padding:3px 10px;"
                                        f"border-radius:6px;font-size:14px;'>{match_count} ANA 🏆</span>")
                     elif match_count > 0:
@@ -645,13 +676,16 @@ with tab2:
                         parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
                     if ss_hit:
                         parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
-                    parts_b.append(prize_badge_html(match_count, joker_hit, ss_hit, True))
+                    if st_hit:
+                        parts_b.append("<span style='color:#FF9800;font-size:14px;'>+ŞANS TOPU ⭐</span>")
+                    parts_b.append(prize_badge_html(GAME, match_count, bonus_hits, True))
                     if parts_b:
                         badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
                                  f"gap:8px;align-items:center;'>{''.join(parts_b)}</div>")
-                render_ticket(main, joker=t_joker, superstar=t_ss,
+                render_ticket(main, joker=t_joker, superstar=t_ss, sans_topu=t_st,
                               drawn_numbers=drawn_numbers,
                               drawn_joker=drawn_joker, drawn_superstar=drawn_ss,
+                              drawn_sans_topu=drawn_st,
                               badge_html=badge)
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -739,7 +773,7 @@ with tab4:
         "açtığında yeni sonuçlarını hazır bulursun."
     )
 
-    settings = auto_tracker.load_settings()
+    settings = auto_tracker.load_settings(game_key=game_key)
     is_enabled = settings.get("enabled", False)
 
     cc1, cc2 = st.columns([2, 1])
@@ -748,19 +782,19 @@ with tab4:
             "🟢 Otomatik Takip" if is_enabled else "⚪ Otomatik Takip",
             value=is_enabled,
             help=("Açıkken: app her yüklendiğinde (en fazla saatte 1) son "
-                  "çekilişler kontrol edilir, kuponlar otomatik değerlendirilir. "
-                  "Kapalıyken: hiçbir otomatik işlem yapılmaz."),
+                  "çekilişler kontrol edilir, kuponlar otomatik değerlendirilir."),
+            key=f"auto_track_toggle_{game_key}",
         )
         if new_state != is_enabled:
-            auto_tracker.set_enabled(new_state)
+            auto_tracker.set_enabled(new_state, game_key=game_key)
             st.cache_data.clear()
             st.rerun()
     with cc2:
         if st.button("🔍 Şimdi Kontrol Et", width="stretch",
-                     disabled=not is_enabled):
+                     disabled=not is_enabled, key=f"auto_check_{game_key}"):
             with st.spinner("Yeni çekilişler kontrol ediliyor..."):
                 st.cache_data.clear()
-                result = auto_tracker.check_now()
+                result = auto_tracker.check_now(game_key=game_key)
             if result.get("error"):
                 st.error(f"Kontrol başarısız: {result['error']}")
             elif result["new_records"] == 0:
@@ -781,7 +815,7 @@ with tab4:
     st.divider()
     st.markdown("### 📊 Otomatik Takip Geçmişi")
 
-    tracking = auto_tracker.load_tracking()
+    tracking = auto_tracker.load_tracking(game_key=game_key)
     if not tracking:
         st.info(
             "Henüz otomatik takip sonucu yok. Otomatik takibi açtıktan sonra "
@@ -797,8 +831,9 @@ with tab4:
         ckl3.metric("Toplam Tahmini Kazanç",
                     f"{total_wins:,.0f} TL".replace(",", "."))
 
-        if st.button("✅ Hepsini Okundu İşaretle", width="stretch"):
-            auto_tracker.mark_all_seen()
+        if st.button("✅ Hepsini Okundu İşaretle", width="stretch",
+                     key=f"mark_seen_{game_key}"):
+            auto_tracker.mark_all_seen(game_key=game_key)
             st.rerun()
 
         for record in reversed(tracking[-30:]):  # Son 30 çekiliş
@@ -815,20 +850,21 @@ with tab4:
                 drawn = record["drawn"]
                 d_joker = record.get("joker")
                 d_ss = record.get("superstar")
+                d_st = record.get("sans_topu")
                 st.caption("Çekilen Sayılar:")
-                render_ticket(drawn, joker=d_joker, superstar=d_ss,
+                render_ticket(drawn, joker=d_joker, superstar=d_ss, sans_topu=d_st,
                               drawn_numbers=drawn,
-                              drawn_joker=d_joker, drawn_superstar=d_ss)
+                              drawn_joker=d_joker, drawn_superstar=d_ss,
+                              drawn_sans_topu=d_st)
 
                 if not wins:
-                    st.write("Bu çekilişte kayıtlı kuponlardan hiçbiri 3+ tutturamadı, "
-                             "Joker veya Süper Star yakalayamadı.")
+                    st.write("Bu çekilişte kayıtlı kuponlardan hiçbiri ödüllü tutturma yapamadı.")
                 else:
                     st.markdown("**Tutturan Kuponlar:**")
                     for w in wins:
                         prize = w.get("estimated_prize_tl", 0)
                         parts = []
-                        if w["main_hits"] >= 3:
+                        if w["main_hits"] >= 3 or (w["main_hits"] == 0 and game_key == "on_numara"):
                             parts.append(f"<span style='color:#111;background:#00E676;"
                                          f"padding:2px 8px;border-radius:5px;font-size:13px;'>"
                                          f"{w['main_hits']} ana 🏆</span>")
@@ -836,6 +872,8 @@ with tab4:
                             parts.append("<span style='color:#FF9800;font-size:13px;'>+JOKER</span>")
                         if w.get("superstar_hit"):
                             parts.append("<span style='color:#BB86FC;font-size:13px;'>+SÜPER STAR</span>")
+                        if w.get("sans_topu_hit"):
+                            parts.append("<span style='color:#FF9800;font-size:13px;'>+ŞANS TOPU</span>")
                         if prize > 0:
                             parts.append(f"<span style='color:#00E676;font-weight:600;"
                                          f"font-size:14px;'>≈ {prize:,.0f} TL</span>".replace(",", "."))
@@ -844,29 +882,32 @@ with tab4:
                         render_ticket(w["main"],
                                       joker=w.get("joker"),
                                       superstar=w.get("superstar"),
+                                      sans_topu=w.get("sans_topu"),
                                       drawn_numbers=drawn,
                                       drawn_joker=d_joker, drawn_superstar=d_ss,
+                                      drawn_sans_topu=d_st,
                                       badge_html=badge)
                         st.caption(f"📅 Kaydedildi: {w.get('record_tarih', '?')}")
 
     st.divider()
-    st.markdown("### 🌐 Manuel Anlık Sonuç (Hızlı Bakış)")
+    st.markdown(f"### 🌐 {GAME['name']} — Manuel Anlık Sonuç (Hızlı Bakış)")
     if st.button("Güncel Sonucu Getir", width="stretch", type="primary"):
         try:
-            with st.spinner("Son çekiliş kaynaktan çekiliyor..."):
-                latest = fetch_latest_draw()
+            with st.spinner(f"{GAME['name']} son çekiliş kaynaktan çekiliyor..."):
+                latest = fetch_latest_draw(game=GAME)
             date_str = latest["tarih"].strftime("%d-%m-%Y")
             drawn = latest["sayilar"]
             d_joker = latest.get("joker")
             d_ss = latest.get("superstar")
+            d_st = latest.get("sans_topu")
             st.success(f"✅ Çekiliş #{latest['cekilis_no']} — {date_str}")
 
             st.markdown("### 🎲 Çekiliş Sonucu")
-            render_ticket(drawn, joker=d_joker, superstar=d_ss,
+            render_ticket(drawn, joker=d_joker, superstar=d_ss, sans_topu=d_st,
                           drawn_numbers=drawn,
-                          drawn_joker=d_joker, drawn_superstar=d_ss)
+                          drawn_joker=d_joker, drawn_superstar=d_ss,
+                          drawn_sans_topu=d_st)
 
-            saved = load_saved_tickets()
             if saved:
                 st.markdown("### 📊 Sizin Kuponlarınızdaki Durum")
                 for record in reversed(saved):
@@ -875,15 +916,18 @@ with tab4:
                             main = list(ticket["main"]) if "main" in ticket else list(ticket.get("kuponlar", []))
                             t_joker = ticket.get("joker")
                             t_ss = ticket.get("superstar")
+                            t_st = ticket.get("sans_topu")
                         else:
                             main = list(ticket)
-                            t_joker = None
-                            t_ss = None
+                            t_joker = t_ss = t_st = None
                         m = len(set(main).intersection(drawn))
                         joker_hit = t_joker is not None and t_joker == d_joker
                         ss_hit = t_ss is not None and t_ss == d_ss
+                        st_hit = t_st is not None and d_st is not None and t_st == d_st
+                        bonus_hits = {"joker": joker_hit, "superstar": ss_hit, "sans_topu": st_hit}
                         parts_b = []
-                        if m >= 3:
+                        win_threshold = 3 if game_key != "on_numara" else 6
+                        if m >= win_threshold or (game_key == "on_numara" and m == 0):
                             parts_b.append(f"<span style='color:#111;background:#00E676;padding:3px 10px;"
                                            f"border-radius:6px;font-size:14px;'>{m} ANA 🏆</span>")
                         elif m > 0:
@@ -892,14 +936,17 @@ with tab4:
                             parts_b.append("<span style='color:#FF9800;font-size:14px;'>+JOKER ⭐</span>")
                         if ss_hit:
                             parts_b.append("<span style='color:#BB86FC;font-size:14px;'>+SÜPER STAR ⭐</span>")
-                        parts_b.append(prize_badge_html(m, joker_hit, ss_hit, True))
+                        if st_hit:
+                            parts_b.append("<span style='color:#FF9800;font-size:14px;'>+ŞANS TOPU ⭐</span>")
+                        parts_b.append(prize_badge_html(GAME, m, bonus_hits, True))
                         badge = ""
                         if parts_b:
                             badge = (f"<div style='align-self:center;margin-left:15px;display:flex;"
                                      f"gap:8px;align-items:center;'>{''.join(parts_b)}</div>")
-                        render_ticket(main, joker=t_joker, superstar=t_ss,
+                        render_ticket(main, joker=t_joker, superstar=t_ss, sans_topu=t_st,
                                       drawn_numbers=drawn,
                                       drawn_joker=d_joker, drawn_superstar=d_ss,
+                                      drawn_sans_topu=d_st,
                                       badge_html=badge)
             else:
                 st.info("Sistemde karşılaştırılacak kayıtlı kuponunuz bulunmuyor.")
