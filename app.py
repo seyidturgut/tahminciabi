@@ -251,21 +251,43 @@ with tab3:
 
 # TAB 4: AUTOMATION
 with tab4:
-    st.subheader("🤖 Otomasyon ve Arka Plan Robotu")
-    st.markdown("Robot, çekiliş günleri arka planda kendi kendine sonuçları tarar ve sistemi günceller.")
+    st.subheader("🤖 Otomasyon ve Canlı Sonuç Asistanı")
+    st.markdown("Streamlit Cloud altyapısında çalıştığınız için, arka plan robotu yerine tek tıkla internetteki tüm güncel verileri tarayıp ekrana getiren akıllı asistanı kullanabilirsiniz.")
     
-    st.markdown("#### ⚙️ Motor Kontrolü")
-    flag_file = "daemon.flag"
-    is_running = os.path.exists(flag_file)
-    
-    if is_running:
-        st.success("🟢 ROBOT AKTİF: Arka planda kontrol sağlanıyor.")
-        if st.button("⏹️ Robotu Durdur", use_container_width=True):
-            os.remove(flag_file)
-            st.rerun()
-    else:
-        st.warning("🔴 ROBOT KAPALI: Otomatik sonuç takibi devre dışı.")
-        if st.button("▶️ Robotu Başlat", use_container_width=True, type="primary"):
-            with open(flag_file, "w") as f:
-                f.write("running")
-            st.rerun()
+    if st.button("🌐 İnterneti Tara ve Güncel Sonuçları Getir", use_container_width=True, type="primary"):
+        with st.spinner("İnternetteki güncel sonuçlar taranıyor..."):
+            from scraper import get_live_draw_results
+            result = get_live_draw_results()
+            current_date = result.get("tarih", "Bilinmiyor")
+            drawn_numbers = result.get("sayilar", [])
+            
+            st.success(f"✅ Sonuçlar başarıyla çekildi! (Tarih: {current_date})")
+            
+            st.markdown("### 🎲 Güncel Çekiliş Sonucu:")
+            formatted_draw = "".join([f"<div class='ball-match'>{num:02d}</div>" for num in drawn_numbers])
+            st.markdown(f"<div class='ticket-box'>{formatted_draw}</div>", unsafe_allow_html=True)
+            
+            # Kayıtlı kuponlarla karşılaştır
+            saved_data = load_saved_tickets()
+            if saved_data:
+                st.markdown("### 📊 Sizin Kuponlarınızdaki Durum:")
+                for record in reversed(saved_data):
+                    for ticket in record["kuponlar"]:
+                        match_count = len(set(ticket).intersection(set(drawn_numbers)))
+                        html_parts = []
+                        for num in ticket:
+                            if num in drawn_numbers:
+                                html_parts.append(f"<div class='ball-match'>{num:02d}</div>")
+                            else:
+                                html_parts.append(f"<div class='ball'>{num:02d}</div>")
+                        formatted_ticket = "".join(html_parts)
+                        
+                        badge = ""
+                        if match_count >= 3:
+                            badge = f"<div style='color: #111; background: #00E676; padding: 5px 15px; border-radius: 8px; font-size: 16px; align-self: center;'>{match_count} BİLDİNİZ! 🏆</div>"
+                        else:
+                            badge = f"<div style='color: #ff4444; font-size: 16px; align-self: center;'>{match_count} Bildiniz</div>"
+                        
+                        st.markdown(f"<div class='ticket-box'>{formatted_ticket} {badge}</div>", unsafe_allow_html=True)
+            else:
+                st.info("Sistemde karşılaştırılacak kayıtlı kuponunuz bulunmuyor.")
