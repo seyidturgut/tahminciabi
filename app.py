@@ -348,26 +348,32 @@ JOKER_BONUS_TL = 50
 SS_BONUS_TL = 100
 
 
-def calc_prize_tl(game: dict, match_count: int, bonus_hits: dict) -> int:
-    """Oyuna göre ödül hesabı.
+def calc_prize_tl(game: dict, match_count: int, bonus_hits: dict,
+                  include_bonus: bool = False) -> int:
+    """Oyuna göre **tek bir kupon** için ödül hesabı.
 
-    game: GAME config dict.
-    match_count: ana sayılarda doğru sayısı.
-    bonus_hits: {"joker": True, "superstar": False, "sans_topu": True}
+    Args:
+        match_count: ana sayılarda doğru sayısı.
+        bonus_hits: {"joker": True, "superstar": False, "sans_topu": True}
+        include_bonus: Sayısal Loto için Joker/SS bonusunu dahil et.
+            Sistem oyununda tüm kuponlar aynı Joker+SS paylaşır — toplam
+            kazançta bonusu sadece BİR kez saymak için per-ticket False
+            kullanılır, sistem geneli ayrıca eklenir.
     """
     prizes = game.get("prizes_tl", {})
     key = game["key"]
 
     if key == "sans_topu":
         st_hit = 1 if bonus_hits.get("sans_topu") else 0
-        amount = prizes.get((match_count, st_hit), 0)
-        return int(amount)
+        return int(prizes.get((match_count, st_hit), 0))
 
     if key == "on_numara":
         return int(prizes.get(match_count, 0))
 
-    # Sayısal Loto (default)
+    # Sayısal Loto: ana ödül + (opsiyonel) Joker/SS bonusu
     main = prizes.get(match_count, 0) if match_count >= 3 else 0
+    if not include_bonus:
+        return int(main)
     bonus = 0
     if bonus_hits.get("joker"):
         bonus += JOKER_BONUS_TL
@@ -948,11 +954,16 @@ with tab4:
                           drawn_sans_topu=d_st)
 
             if saved:
-                # Önce tüm kuponları değerlendir, toplam kazancı hesapla
+                # Önce tüm kuponları değerlendir, toplam kazancı hesapla.
+                # Sayısal Loto Sistem oyununda 28 kupon aynı Joker+SS'yi paylaşır;
+                # bonus ödülleri kayıt (record) başına BİR KEZ sayılır.
                 evaluated = []
                 total_winnings = 0
                 winning_count = 0
+                bonus_credit_per_record: dict = {}  # record_id → (joker_done, ss_done)
                 for record in reversed(saved):
+                    rec_id = record.get("id", id(record))
+                    bonus_credit_per_record.setdefault(rec_id, {"joker": False, "ss": False})
                     for ticket in record["kuponlar"]:
                         if isinstance(ticket, dict):
                             main = list(ticket["main"]) if "main" in ticket else list(ticket.get("kuponlar", []))
@@ -967,14 +978,24 @@ with tab4:
                         ss_hit = t_ss is not None and t_ss == d_ss
                         st_hit = t_st is not None and d_st is not None and t_st == d_st
                         bonus_hits = {"joker": joker_hit, "superstar": ss_hit, "sans_topu": st_hit}
-                        prize = calc_prize_tl(GAME, m, bonus_hits)
-                        if prize > 0:
+                        # Per-ticket badge: sadece ana ödül (bonusu sistem-genelinde topluyoruz)
+                        prize_main_only = calc_prize_tl(GAME, m, bonus_hits, include_bonus=False)
+                        if prize_main_only > 0:
                             winning_count += 1
-                            total_winnings += prize
+                            total_winnings += prize_main_only
+                        # Sistem-geneli Joker/SS bonusu: kayıt başına bir kez
+                        if game_key == "sayisal_loto":
+                            credit = bonus_credit_per_record[rec_id]
+                            if joker_hit and not credit["joker"]:
+                                total_winnings += JOKER_BONUS_TL
+                                credit["joker"] = True
+                            if ss_hit and not credit["ss"]:
+                                total_winnings += SS_BONUS_TL
+                                credit["ss"] = True
                         evaluated.append({
                             "main": main, "t_joker": t_joker, "t_ss": t_ss, "t_st": t_st,
                             "m": m, "joker_hit": joker_hit, "ss_hit": ss_hit,
-                            "st_hit": st_hit, "bonus_hits": bonus_hits, "prize": prize,
+                            "st_hit": st_hit, "bonus_hits": bonus_hits, "prize": prize_main_only,
                         })
 
                 # BÜYÜK TOPLAM KAZANÇ BANNER'I
