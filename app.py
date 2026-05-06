@@ -9,6 +9,9 @@ from math_engine import MathEngine
 from predictor import Predictor
 from ticket_manager import save_tickets, load_saved_tickets, delete_all_tickets
 
+APP_VERSION = "v2.0.0"
+APP_BUILD_DATE = "2026-05-06"
+
 st.set_page_config(page_title="Tahminci | Sayısal Loto AI", layout="wide", page_icon="🔮")
 
 st.markdown("""
@@ -76,6 +79,11 @@ if not st.session_state.logged_in:
             "uzun vadede kazanma olasılığını materyal olarak yükseltmez.</p>",
             unsafe_allow_html=True,
         )
+        st.markdown(
+            f"<p style='text-align:center;color:#444;font-size:11px;margin-top:20px;'>"
+            f"<code style='color:#00E676;'>{APP_VERSION}</code> · build {APP_BUILD_DATE}</p>",
+            unsafe_allow_html=True,
+        )
     st.stop()
 
 # --- DATA ---
@@ -105,8 +113,18 @@ except Exception as e:
 engine, predictor = get_engine_and_predictor(len(df))
 
 # --- HEADER ---
-st.title("🔮 Tahminci: Sayısal Loto AI Asistanı")
-st.markdown("Markov + Bayesian + Rasgelelik Testleri + LightGBM ile çoklu-model olasılık analizi.")
+title_col, ver_col = st.columns([5, 1])
+with title_col:
+    st.title("🔮 Tahminci: Sayısal Loto AI Asistanı")
+    st.markdown("Markov + Bayesian + Rasgelelik Testleri + LightGBM ile çoklu-model olasılık analizi.")
+with ver_col:
+    st.markdown(
+        f"<div style='text-align:right;color:#666;font-size:12px;margin-top:25px;'>"
+        f"<code style='background:#1a1c23;padding:3px 8px;border-radius:4px;color:#00E676;'>"
+        f"{APP_VERSION}</code><br><span style='font-size:10px;'>{APP_BUILD_DATE}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 st.divider()
 
 # --- SIDEBAR ---
