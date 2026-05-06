@@ -251,6 +251,64 @@ class Predictor:
             })
         return tickets, pool
 
+    def generate_multi_mini_system(
+        self, num_systems: int = 5, pool_size_each: int = 7
+    ) -> tuple[list[dict], list[list[int]]]:
+        """
+        Çoklu Mini-Sistem: N adet bağımsız küçük havuz üretir, her birinin
+        tüm C(pool_size_each, 6) kombinasyonunu döner.
+
+        Avantaj: tek büyük sistem (örn. Sistem 10 = 210 kolon) yerine 5 farklı
+        Sistem 7 (5×7 = 35 kolon) — havuzlar bağımsız olduğu için "all-or-nothing"
+        riski dağılır.
+
+        Args:
+            num_systems: bağımsız havuz sayısı.
+            pool_size_each: her havuzun boyutu (6-10 mantıklı).
+
+        Returns:
+            (tickets, pools) — tickets her biri pool_index içerir; pools listesi
+            her havuzun sıralı sayılarını verir.
+        """
+        if not 2 <= num_systems <= 10:
+            raise ValueError("num_systems 2-10 arasında olmalı")
+        if not 6 <= pool_size_each <= 10:
+            raise ValueError("pool_size_each 6-10 arasında olmalı")
+
+        out = self.get_probabilities()
+        pools: list[list[int]] = []
+        used: set[int] = set()  # havuzlar arası örtüşmeyi azalt
+
+        for _ in range(num_systems):
+            probs = out.final.copy()
+            for n in used:
+                probs[n - 1] *= 0.3  # daha önce kullanılanların ağırlığını düşür
+            pool = self._build_smart_pool(probs, pool_size_each, randomize=True)
+            pools.append(pool)
+            used.update(pool)
+
+        # Tüm pool'ların dışından joker + ss seç
+        all_pool_nums = set().union(*[set(p) for p in pools])
+        masked = out.final.copy()
+        for n in all_pool_nums:
+            masked[n - 1] = -1
+        sorted_remaining = np.argsort(masked)[::-1]
+        sys_joker = int(sorted_remaining[0]) + 1
+        sys_ss = int(sorted_remaining[1]) + 1
+
+        tickets = []
+        for idx, pool in enumerate(pools):
+            for combo in combinations(pool, 6):
+                conf = self._ticket_confidence(combo)
+                tickets.append({
+                    "main": tuple(combo),
+                    "joker": sys_joker,
+                    "superstar": sys_ss,
+                    "confidence": conf,
+                    "pool_index": idx,
+                })
+        return tickets, pools
+
     def _pick_joker_and_superstar(
         self, main6: tuple[int, ...], weights: np.ndarray, rng: np.random.Generator
     ) -> tuple[int, int]:

@@ -181,18 +181,48 @@ with st.sidebar:
     st.header("⚙️ Motor Ayarları")
     strategy = st.radio(
         "Strateji",
-        ["🎯 Sistemli Oyun (Garanti)", "🎓 Profesör Modu",
+        ["🎲 Çoklu Mini-Sistem (Önerilen)", "🎯 Sistemli Oyun (Garanti)", "🎓 Profesör Modu",
          "Süper Hibrit", "Sıcak Sayılar", "Soğuk Sayılar"],
         help=(
-            "🎯 Sistemli Oyun: top-N olasılıklı sayıdan tüm kombinasyonlar — havuzda 3+ "
-            "doğru çıkarsa garantili 3 tuttur (matematiksel).\n\n"
-            "🎓 Profesör Modu: Markov + Bayesian + rasgelelik + LightGBM ile bağımsız "
-            "kuponlar."
+            "🎲 Çoklu Mini-Sistem: N adet bağımsız küçük havuz — riski dağıtır, "
+            "tek büyük sistemden 3-5x daha sık 'en az 1 tutar' verir.\n\n"
+            "🎯 Sistemli Oyun: tek havuzlu klasik sistem — havuzda 3+ çıkarsa "
+            "garantili tutar.\n\n"
+            "🎓 Profesör Modu: Markov + Bayesian + LightGBM ile bağımsız kuponlar."
         ),
     )
-    strategy_clean = strategy.replace("🎓 ", "").replace("🎯 ", "")
+    strategy_clean = strategy.replace("🎓 ", "").replace("🎯 ", "").replace("🎲 ", "")
 
-    if strategy == "🎯 Sistemli Oyun (Garanti)":
+    if strategy == "🎲 Çoklu Mini-Sistem (Önerilen)":
+        from math import comb
+        num_systems = st.slider("Mini-Sistem Sayısı", 2, 10, 5,
+                                 help="Bağımsız küçük havuz sayısı")
+        pool_size_each = st.select_slider("Her Havuz Boyutu",
+                                           options=[6, 7, 8], value=7)
+        kolon_each = comb(pool_size_each, 6)
+        toplam_kolon = num_systems * kolon_each
+        toplam_cost = toplam_kolon * 25
+
+        c_t = comb(90, pool_size_each)
+        p_lt3 = sum(comb(6, k) * comb(84, pool_size_each - k) / c_t for k in range(3))
+        p_per = 1 - p_lt3
+        p_at_least_one = (1 - p_lt3 ** num_systems) * 100
+
+        st.caption(
+            f"**{num_systems} × Sistem {pool_size_each}**: "
+            f"{toplam_kolon} kolon × 25 TL = **{toplam_cost:,} TL**. "
+            f"En az 1 havuzda 3+ tutturma şansı: **%{p_at_least_one:.1f}** "
+            f"(tek Sistem {pool_size_each} → %{p_per*100:.1f})"
+            .replace(",", ".")
+        )
+        st.info(
+            f"💡 Bağımsız havuzlar = riski dağıtır. Aynı bütçeye tek büyük sistem "
+            f"yerine birden fazla küçük sistem **3-5x daha sık** 'en az 1 tutar'."
+        )
+        num_tickets = toplam_kolon
+        pool_size = None
+        randomize_pool = True
+    elif strategy == "🎯 Sistemli Oyun (Garanti)":
         pool_size = st.select_slider(
             "Sistem Boyutu (havuzdaki sayı)",
             options=[6, 7, 8, 9, 10, 12, 15, 20],
@@ -337,13 +367,26 @@ with tab1:
         st.session_state.current_pool = None
 
     if st.button("🚀 KUPON ÜRET", width="stretch", type="primary"):
-        if strategy == "🎯 Sistemli Oyun (Garanti)":
+        if strategy == "🎲 Çoklu Mini-Sistem (Önerilen)":
+            with st.spinner(f"{num_systems} bağımsız mini-sistem hazırlanıyor..."):
+                tickets, pools = predictor.generate_multi_mini_system(
+                    num_systems=num_systems, pool_size_each=pool_size_each
+                )
+            st.session_state.current_tickets = tickets
+            st.session_state.current_pool = pools  # list of lists
+            st.session_state.current_multi = True
+            st.success(
+                f"✅ {num_systems} × Sistem {pool_size_each} üretildi — "
+                f"**{len(tickets)} kolon** ({num_systems} bağımsız havuz)."
+            )
+        elif strategy == "🎯 Sistemli Oyun (Garanti)":
             with st.spinner(f"Sistem {pool_size} hazırlanıyor..."):
                 tickets, pool = predictor.generate_system_tickets(
                     pool_size=pool_size, randomize_pool=randomize_pool
                 )
             st.session_state.current_tickets = tickets
             st.session_state.current_pool = pool
+            st.session_state.current_multi = False
             st.success(
                 f"✅ Sistem {pool_size} üretildi — **{len(tickets)} kolon**. "
                 f"Havuz: {pool}"
@@ -355,10 +398,28 @@ with tab1:
                 )
             st.session_state.current_tickets = tickets
             st.session_state.current_pool = None
+            st.session_state.current_multi = False
             st.success(f"✅ {len(tickets)} kupon üretildi ({attempts} varyasyon denendi).")
 
     if st.session_state.current_tickets:
-        if st.session_state.current_pool:
+        is_multi = st.session_state.get("current_multi", False)
+        if is_multi and st.session_state.current_pool:
+            pools = st.session_state.current_pool
+            for idx, pool in enumerate(pools):
+                pool_balls = "".join(
+                    f"<div class='ball-superstar' style='border-color:#FFD54F;color:#FFD54F;'>{n:02d}</div>"
+                    for n in pool
+                )
+                st.markdown(
+                    f"<div style='background:#1a1c23;border:1px solid #333;border-radius:10px;"
+                    f"padding:12px;margin:8px 0;'>"
+                    f"<div style='color:#FFD54F;font-size:13px;font-weight:600;margin-bottom:8px;'>"
+                    f"🎲 MİNİ-SİSTEM #{idx+1} ({len(pool)} sayı)</div>"
+                    f"<div style='display:flex;gap:6px;flex-wrap:wrap;'>{pool_balls}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        elif st.session_state.current_pool:
             pool = st.session_state.current_pool
             pool_balls = "".join(
                 f"<div class='ball-superstar' style='border-color:#FFD54F;color:#FFD54F;'>{n:02d}</div>"
