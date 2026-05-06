@@ -137,7 +137,7 @@ with st.sidebar:
         st.rerun()
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["🎯 Tahmin Üretici", "🎟️ Kupon & Sonuç Kontrolü", "📈 Derin İstatistikler"])
+tab1, tab2, tab3, tab4 = st.tabs(["🎯 Tahmin Üretici", "🎟️ Kupon & Sonuç Kontrolü", "📈 Derin İstatistikler", "🤖 Otomasyon & Ayarlar"])
 
 # TAB 1: GENERATOR
 with tab1:
@@ -248,3 +248,24 @@ with tab3:
     
     with st.expander("Geçmiş Veritabanını Görüntüle"):
         st.dataframe(df.sort_values(by='tarih', ascending=False).head(100), use_container_width=True)
+
+# TAB 4: AUTOMATION
+with tab4:
+    st.subheader("🤖 Otomasyon ve Arka Plan Robotu")
+    st.markdown("Robot, çekiliş günleri arka planda kendi kendine sonuçları tarar ve sistemi günceller.")
+    
+    st.markdown("#### ⚙️ Motor Kontrolü")
+    flag_file = "daemon.flag"
+    is_running = os.path.exists(flag_file)
+    
+    if is_running:
+        st.success("🟢 ROBOT AKTİF: Arka planda kontrol sağlanıyor.")
+        if st.button("⏹️ Robotu Durdur", use_container_width=True):
+            os.remove(flag_file)
+            st.rerun()
+    else:
+        st.warning("🔴 ROBOT KAPALI: Otomatik sonuç takibi devre dışı.")
+        if st.button("▶️ Robotu Başlat", use_container_width=True, type="primary"):
+            with open(flag_file, "w") as f:
+                f.write("running")
+            st.rerun()
