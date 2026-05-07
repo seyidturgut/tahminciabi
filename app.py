@@ -215,6 +215,7 @@ with st.sidebar:
     st.header("⚙️ Motor Ayarları")
     _ALL_STRATEGIES = [
         ("multi_mini", "🎲 Çoklu Mini-Sistem (Önerilen)"),
+        ("wheel", "🎡 Akıllı Wheel Sistemi"),
         ("system", "🎯 Sistemli Oyun (Garanti)"),
         ("professor", "🎓 Profesör Modu"),
         ("super_hybrid", "Süper Hibrit"),
@@ -227,11 +228,14 @@ with st.sidebar:
         [label for _, label in available],
         help=(
             "🎲 Çoklu Mini-Sistem: N adet bağımsız küçük havuz — riski dağıtır.\n"
-            "🎯 Sistemli Oyun: tek havuzlu klasik sistem — garanti.\n"
-            "🎓 Profesör Modu: Markov + Bayesian + LightGBM ile bağımsız kuponlar."
+            "🎡 Akıllı Wheel: covering design — full wheel'in 1/5'i kupon ile "
+            "matematiksel garantili kapsama.\n"
+            "🎯 Sistemli Oyun: tek havuzlu full wheel — pahalı, jackpot garanti.\n"
+            "🎓 Profesör Modu: 4 model ile bağımsız kuponlar."
         ),
     )
-    strategy_clean = strategy.replace("🎓 ", "").replace("🎯 ", "").replace("🎲 ", "")
+    strategy_clean = (strategy.replace("🎓 ", "").replace("🎯 ", "")
+                      .replace("🎲 ", "").replace("🎡 ", ""))
 
     PICKS = GAME["picks"]
     DRAWN = GAME["drawn"]
@@ -271,6 +275,40 @@ with st.sidebar:
         num_tickets = toplam_kolon
         pool_size = None
         randomize_pool = True
+    elif strategy == "🎡 Akıllı Wheel Sistemi":
+        from math import comb
+        from analytics.wheel_systems import estimated_block_count
+        wheel_pool = st.select_slider(
+            "Havuz Boyutu",
+            options=list(range(PICKS+1, min(16, TOTAL+1))),
+            value=min(10, TOTAL),
+        )
+        wheel_t = st.select_slider(
+            "Garanti Seviyesi (havuzda kaç çıkarsa garanti tutar)",
+            options=list(range(3, PICKS+1)),
+            value=4,
+            help="3 = ucuz/zayıf garanti, 4 = dengeli, 5+ = pahalı/güçlü",
+        )
+        full_wheel = comb(wheel_pool, PICKS)
+        est = estimated_block_count(wheel_pool, PICKS, wheel_t)
+        if est:
+            est_cost = est * COST
+            full_cost = full_wheel * COST
+            savings = int(100 * (1 - est / full_wheel))
+            st.caption(
+                f"**Wheel({wheel_pool}, {PICKS}, {wheel_t})**: ~{est} kolon × {COST} TL = "
+                f"**~{est_cost:,} TL**. Full wheel: {full_wheel} kolon ({full_cost:,} TL) — "
+                f"**%{savings} tasarruf**.\n\n"
+                f"📐 Garanti: havuzdaki **{wheel_t}+ sayı** çekilişte çıkarsa, "
+                f"kuponlardan en az 1'i **{wheel_t} doğru** tutar."
+                .replace(",", ".")
+            )
+        else:
+            st.caption(f"Wheel({wheel_pool}, {PICKS}, {wheel_t}) — üretirken hesaplanacak.")
+        randomize_pool = st.toggle("🎲 Her üretimde farklı havuz", value=True,
+                                   key=f"wheel_randomize_{game_key}")
+        num_tickets = est or full_wheel
+        pool_size = wheel_pool
     elif strategy == "🎯 Sistemli Oyun (Garanti)":
         # Oyuna göre uygun pool size seçenekleri
         sys_options = [PICKS, PICKS+1, PICKS+2, PICKS+3, PICKS+4, PICKS+5,
@@ -494,6 +532,19 @@ with tab1:
             st.success(
                 f"✅ {num_systems} × Sistem {pool_size_each} üretildi — "
                 f"**{len(tickets)} kolon** ({num_systems} bağımsız havuz)."
+            )
+        elif strategy == "🎡 Akıllı Wheel Sistemi":
+            with st.spinner(f"Wheel({pool_size}, {PICKS}, {wheel_t}) hesaplanıyor..."):
+                tickets, pool, info = predictor.generate_wheel_system(
+                    pool_size=pool_size, guarantee_t=wheel_t,
+                    randomize_pool=randomize_pool,
+                )
+            st.session_state.current_tickets = tickets
+            st.session_state.current_pool = pool
+            st.session_state.current_multi = False
+            st.success(
+                f"✅ Wheel({pool_size}, {PICKS}, {wheel_t}) — **{len(tickets)} kolon** "
+                f"(full wheel'den %{info['savings_pct']} az). Havuz: {pool}"
             )
         elif strategy == "🎯 Sistemli Oyun (Garanti)":
             with st.spinner(f"Sistem {pool_size} hazırlanıyor..."):

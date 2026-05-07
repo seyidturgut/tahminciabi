@@ -299,6 +299,60 @@ class Predictor:
             })
         return tickets, pool
 
+    def generate_wheel_system(
+        self, pool_size: int, guarantee_t: int = 4,
+        randomize_pool: bool = True
+    ) -> tuple[list[dict], list[int], dict]:
+        """
+        Akıllı Wheel sistemi: greedy covering design ile **abbreviated wheel**.
+
+        Mevcut generate_system_tickets full wheel (C(N,k))'i üretir.
+        Bu, çok daha az kuponla daha zayıf ama garantili kapsama verir.
+
+        Args:
+            pool_size: havuz boyutu.
+            guarantee_t: garanti seviyesi (havuzda t çıkarsa t-match kesin).
+                Tipik: 3 = ucuz, 4 = dengeli, 5 = pahalı.
+            randomize_pool: True ise olasılık-ağırlıklı pool seçimi.
+
+        Returns:
+            (tickets, pool, info)
+            info: {"guarantee": int, "block_count": int, "comparison": str}
+        """
+        from analytics.wheel_systems import greedy_covering
+        if not 6 <= pool_size <= 15:
+            raise ValueError("pool_size 6-15 arasında olmalı")
+        if not 3 <= guarantee_t <= self.picks:
+            raise ValueError(f"guarantee_t 3-{self.picks} arasında olmalı")
+
+        out = self.get_probabilities()
+        pool = self._build_smart_pool(out.final, pool_size, randomize_pool)
+
+        # Greedy covering: pool sayılarını k=picks bloklarına dağıt
+        blocks = greedy_covering(pool, k=self.picks, t=guarantee_t)
+
+        # Bonusları sistem geneli için bir kez seç
+        rng = np.random.default_rng()
+        sys_bonuses = self._pick_bonuses(tuple(pool), out.final, rng)
+
+        tickets = []
+        for combo in blocks:
+            conf = self._ticket_confidence(combo)
+            tickets.append({
+                "main": tuple(combo),
+                "confidence": conf,
+                **sys_bonuses,
+            })
+
+        full_wheel_size = math.comb(pool_size, self.picks)
+        info = {
+            "guarantee": guarantee_t,
+            "block_count": len(blocks),
+            "full_wheel_size": full_wheel_size,
+            "savings_pct": int(100 * (1 - len(blocks) / full_wheel_size)),
+        }
+        return tickets, pool, info
+
     def generate_multi_mini_system(
         self, num_systems: int = 5, pool_size_each: int = 7
     ) -> tuple[list[dict], list[list[int]]]:

@@ -38,8 +38,8 @@ GAMES: dict[str, dict] = {
         "prizes_tl": {6: 930_000_000, 5: 2_200_000, 4: 13_500, 3: 890},
         "joker_bonus_tl": 50,
         "ss_bonus_tl": 100,
-        "strategies": ["multi_mini", "system", "professor", "super_hybrid",
-                       "hot", "cold"],
+        "strategies": ["multi_mini", "wheel", "system", "professor",
+                       "super_hybrid", "hot", "cold"],
     },
     "sans_topu": {
         "key": "sans_topu",
@@ -66,8 +66,8 @@ GAMES: dict[str, dict] = {
             (1, 1): 36,
             (0, 1): 36,
         },
-        "strategies": ["multi_mini", "system", "professor", "super_hybrid",
-                       "hot", "cold"],
+        "strategies": ["multi_mini", "wheel", "system", "professor",
+                       "super_hybrid", "hot", "cold"],
     },
     "on_numara": {
         "key": "on_numara",
