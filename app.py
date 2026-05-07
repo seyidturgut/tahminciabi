@@ -375,14 +375,14 @@ with st.sidebar:
             key=f"avoid_crowd_{game_key}",
         )
         if crowd_on:
-            crowd_strength = st.select_slider(
+            _CROWD_LEVELS = {"Hafif": 1.2, "Orta": 1.4, "Agresif": 1.8}
+            crowd_label = st.selectbox(
                 "Boost şiddeti",
-                options=[("Hafif", 1.2), ("Orta", 1.4), ("Agresif", 1.8)],
-                value=("Orta", 1.4),
-                format_func=lambda x: x[0],
+                options=list(_CROWD_LEVELS.keys()),
+                index=1,
                 key=f"crowd_strength_{game_key}",
             )
-            predictor.set_avoid_crowd(crowd_strength[1])
+            predictor.set_avoid_crowd(_CROWD_LEVELS[crowd_label])
         else:
             predictor.set_avoid_crowd(1.0)
 
