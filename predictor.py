@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from analytics.probability_engine import ModelOutput, compute as compute_probabilities
+from analytics.popularity import apply_avoid_crowd
 from math_engine import MathEngine
 from games import get_game, primes_for_game, number_columns
 
@@ -49,6 +50,8 @@ class Predictor:
         self.draw_size = self.picks
         self.bonuses = game.get("bonuses", [])
         self.primes = primes_for_game(game)
+        # Avoid-the-Crowd boost: 1.0 = kapalı, 1.4 = orta, 1.8 = agresif
+        self.avoid_crowd_boost = 1.0
 
         cols = number_columns(game)
         self.engine = MathEngine(df, total_numbers=self.total_numbers,
@@ -73,9 +76,20 @@ class Predictor:
 
         self._probabilities: Optional[ModelOutput] = None
 
+    def set_avoid_crowd(self, boost: float) -> None:
+        """Avoid-the-Crowd boost değerini değiştirir; cache invalidate edilir."""
+        if boost != self.avoid_crowd_boost:
+            self.avoid_crowd_boost = boost
+            self._probabilities = None  # cached final yeniden hesaplanır
+
     def get_probabilities(self, force_train: bool = False) -> ModelOutput:
         if self._probabilities is None or force_train:
-            self._probabilities = compute_probabilities(self.df, force_train_ml=force_train)
+            raw = compute_probabilities(self.df, force_train_ml=force_train)
+            # Avoid-the-Crowd post-multiplier
+            if self.avoid_crowd_boost > 1.0:
+                from dataclasses import replace
+                raw = replace(raw, final=apply_avoid_crowd(raw.final, self.avoid_crowd_boost))
+            self._probabilities = raw
         return self._probabilities
 
     # --- Filtreler -------------------------------------------------------

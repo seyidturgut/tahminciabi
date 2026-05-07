@@ -325,6 +325,29 @@ with st.sidebar:
         randomize_pool = False
         num_tickets = st.slider("Üretilecek Kolon Sayısı", 1, 10, 5)
 
+    # --- AVOID-THE-CROWD ---
+    if GAME["total"] >= 32:
+        st.divider()
+        crowd_on = st.toggle(
+            "🎯 Avoid-the-Crowd (paylaşma riskini azalt)",
+            value=False,
+            help=("Çoğu oyuncu doğum tarihi seçer (1-31). Bu mod **32+** sayılara "
+                  "ağırlık verir. Kazanma şansını DEĞİŞTİRMEZ ama jackpot'u kaç "
+                  "kişiyle paylaşacağını AZALTIR (Expected Value optimizasyonu)."),
+            key=f"avoid_crowd_{game_key}",
+        )
+        if crowd_on:
+            crowd_strength = st.select_slider(
+                "Boost şiddeti",
+                options=[("Hafif", 1.2), ("Orta", 1.4), ("Agresif", 1.8)],
+                value=("Orta", 1.4),
+                format_func=lambda x: x[0],
+                key=f"crowd_strength_{game_key}",
+            )
+            predictor.set_avoid_crowd(crowd_strength[1])
+        else:
+            predictor.set_avoid_crowd(1.0)
+
     st.divider()
     if st.button("🌐 Son Çekilişi Senkronize Et", width="stretch"):
         try:
